@@ -1,0 +1,24 @@
+{
+  "name": "multi-agent-cognitive-architecture",
+  "version": "1.0.0",
+  "description": "",
+  "main": "main.py",
+  "scripts": {
+    "start": "node main.py"
+  },
+  "dependencies": {
+    "fastapi": "latest",
+    "uvicorn": "latest",
+    "pydantic": "latest",
+    "pydantic-settings": "latest",
+    "google-generativeai": "latest",
+    "python-json-logger": "latest",
+    "motor": "latest",
+    "fastapi-limiter": "latest",
+    "redis": "latest",
+    "python-jose": "latest",
+    "tenacity": "latest",
+    "pytest": "latest",
+    "pytest-asyncio": "latest"
+  }
+}

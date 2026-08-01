@@ -10,6 +10,8 @@ from src.services.memory_service import MemoryService
 from src.models.core_models import CognitiveCycle, DiscoveredPattern, MemoryQueryRequest
 from src.core.config import settings
 from src.agents.utils import extract_json_from_response
+from src.models.research_models import CognitiveResearchSignals, InquirySourceType
+from src.services.inquiry_candidate_service import InquiryCandidateService
 
 logger = logging.getLogger(__name__)
 
@@ -26,11 +28,13 @@ class SelfReflectionAndDiscoveryEngine:
         self, 
         llm_service: LLMIntegrationService, 
         memory_service: MemoryService,
-        proactive_engine: Optional[Any] = None
+        proactive_engine: Optional[Any] = None,
+        inquiry_candidate_service: Optional[InquiryCandidateService] = None,
     ):
         self.llm_service = llm_service
         self.memory_service = memory_service
         self.proactive_engine = proactive_engine  # Optional ProactiveEngagementEngine
+        self.inquiry_candidate_service = inquiry_candidate_service
         logger.info("SelfReflectionAndDiscoveryEngine initialized.")
 
     async def _generate_pattern_embedding(self, text: str) -> List[float]:
@@ -118,6 +122,19 @@ class SelfReflectionAndDiscoveryEngine:
             # 3. Store discovered patterns and optionally generate proactive messages
             for pattern in discovered_patterns:
                 await self.memory_service.upsert_pattern(pattern)
+
+                if self.inquiry_candidate_service and self._is_inquiry_pattern(pattern):
+                    metadata = pattern.metadata or {}
+                    await self.inquiry_candidate_service.propose_offline(
+                        user_id=user_id,
+                        question=pattern.description,
+                        hypothesis=str(metadata.get("hypothesis")) if metadata.get("hypothesis") else None,
+                        signals=self._offline_inquiry_signals(pattern),
+                        source_type=InquirySourceType.REFLECTION,
+                        source_cycle_ids=pattern.source_cycle_ids,
+                        source_pattern_ids=[pattern.pattern_id],
+                        metadata={"reflection_type": "self_reflection"},
+                    )
                 
                 # Check if pattern is worth sharing proactively
                 if self.proactive_engine and self._should_share_pattern(pattern):
@@ -193,6 +210,19 @@ class SelfReflectionAndDiscoveryEngine:
             # Store discovered patterns and generate proactive messages
             for pattern in discovered_patterns:
                 await self.memory_service.upsert_pattern(pattern)
+
+                if self.inquiry_candidate_service and self._is_inquiry_pattern(pattern):
+                    metadata = pattern.metadata or {}
+                    await self.inquiry_candidate_service.propose_offline(
+                        user_id=user_id,
+                        question=pattern.description,
+                        hypothesis=str(metadata.get("hypothesis")) if metadata.get("hypothesis") else None,
+                        signals=self._offline_inquiry_signals(pattern),
+                        source_type=InquirySourceType.REFLECTION,
+                        source_cycle_ids=pattern.source_cycle_ids,
+                        source_pattern_ids=[pattern.pattern_id],
+                        metadata={"discovery_type": discovery_type},
+                    )
                 
                 # Generate proactive message for discoveries worth sharing
                 if self.proactive_engine and self._should_share_pattern(pattern):
@@ -225,6 +255,35 @@ class SelfReflectionAndDiscoveryEngine:
             logger.error(f"Discovery failed for user {user_id} (type: {discovery_type}) due to MemoryService error: {e.detail}", exc_info=True)
         except Exception as e:
             logger.critical(f"Unexpected error during discovery for user {user_id} (type: {discovery_type}): {e}", exc_info=True)
+
+    @staticmethod
+    def _is_inquiry_pattern(pattern: DiscoveredPattern) -> bool:
+        pattern_type = pattern.pattern_type.casefold()
+        return "knowledge_gap" in pattern_type or "curiosity" in pattern_type
+
+    @staticmethod
+    def _offline_inquiry_signals(pattern: DiscoveredPattern) -> CognitiveResearchSignals:
+        metadata = pattern.metadata or {}
+
+        def score(name: str, default: float) -> float:
+            try:
+                return max(0.0, min(1.0, float(metadata.get(name, default))))
+            except (TypeError, ValueError):
+                return default
+
+        is_gap = "knowledge_gap" in pattern.pattern_type.casefold()
+        return CognitiveResearchSignals(
+            epistemic_uncertainty=score("uncertainty", 0.85 if is_gap else 0.70),
+            cognitive_conflict=score("conflict", 0.55 if is_gap else 0.35),
+            novelty_prediction_error=score("novelty", 0.65),
+            temporal_volatility=score("temporal_volatility", 0.15),
+            task_stakes=score("salience", 0.55 if is_gap else 0.40),
+            persistence_after_local_attempts=score("persistence", 0.35 if is_gap else 0.20),
+            expected_information_gain=score("expected_information_gain", 0.80 if is_gap else 0.70),
+            privacy_risk=0.05,
+            cloud_cost=0.25,
+            metacognitive_gap=True,
+        )
     
     def _should_share_pattern(self, pattern: DiscoveredPattern) -> bool:
         """

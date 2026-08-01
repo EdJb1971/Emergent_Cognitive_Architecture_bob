@@ -1,6 +1,7 @@
 import pytest
 import asyncio
 import inspect
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
@@ -12,6 +13,8 @@ from src.services.self_reflection_discovery_engine import SelfReflectionAndDisco
 from src.services.escalation_policy import EscalationPolicy
 from src.services.meta_cognitive_monitor import ActionRecommendation, GapType
 from src.services.research_service import DisabledResearchProvider, ResearchService
+from src.services.cognitive_research_drive import CognitiveResearchDrive
+from src.services.inquiry_candidate_service import InquiryCandidateService
 from src.agents.perception_agent import PerceptionAgent
 from src.agents.emotional_agent import EmotionalAgent
 from src.agents.memory_agent import MemoryAgent
@@ -20,6 +23,16 @@ from src.agents.creative_agent import CreativeAgent
 from src.agents.critic_agent import CriticAgent
 from src.agents.discovery_agent import DiscoveryAgent
 from src.models.core_models import UserRequest, AgentOutput, CognitiveCycle, ResponseMetadata, OutcomeSignals
+from src.models.research_models import (
+    InquiryCandidate,
+    InquiryReviewDisposition,
+    InquirySourceType,
+    InquiryStatus,
+    ResearchClaim,
+    ResearchPacket,
+    ResearchPacketStatus,
+    ResearchSource,
+)
 from src.core.exceptions import AgentServiceException, APIException
 
 @pytest.fixture
@@ -193,6 +206,140 @@ async def test_meta_cognitive_search_recommendation_records_governed_decision(or
         "named_fact_missing",
         "metacognitive_gap",
     ]
+
+
+@pytest.mark.asyncio
+async def test_waking_cycle_records_shadow_research_drive_and_queues_inquiry(orchestration_service):
+    monitor = MagicMock()
+    monitor.assess_answer_appropriateness = AsyncMock(
+        return_value=(
+            ActionRecommendation.SEARCH_FIRST,
+            GapType.TOPIC_UNKNOWN,
+            0.2,
+            "Fresh external evidence is required.",
+        )
+    )
+    orchestration_service.meta_cognitive_monitor = monitor
+    orchestration_service.research_service = ResearchService(
+        EscalationPolicy(research_enabled=False),
+        DisabledResearchProvider(),
+    )
+    orchestration_service.cognitive_research_drive = CognitiveResearchDrive(
+        enabled=False,
+        shadow_mode=True,
+    )
+    inquiry_service = MagicMock(spec=InquiryCandidateService)
+    inquiry_service.propose_waking = AsyncMock(return_value=None)
+    orchestration_service.inquiry_candidate_service = inquiry_service
+    request = UserRequest(
+        user_id=uuid4(),
+        input_text="Please search the web for the latest institute director.",
+        session_id=uuid4(),
+        metadata={"local_reasoning_attempts": 999},
+    )
+
+    cycle = await orchestration_service.orchestrate_cycle(request)
+
+    assessment = cycle.metadata["cognitive_research_drive"]
+    assert assessment["recommended_action"] == "authorize_research"
+    assert assessment["effective_action"] == "routine_local"
+    assert assessment["shadow_mode"] is True
+    assert assessment["signals"]["persistence_after_local_attempts"] == 0.0
+    inquiry_service.propose_waking.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_authorized_grounded_packet_is_passed_to_cognitive_brain(orchestration_service):
+    monitor = MagicMock()
+    monitor.assess_answer_appropriateness = AsyncMock(
+        return_value=(
+            ActionRecommendation.SEARCH_FIRST,
+            GapType.TOPIC_UNKNOWN,
+            0.2,
+            "Fresh external evidence is required.",
+        )
+    )
+    orchestration_service.meta_cognitive_monitor = monitor
+    orchestration_service.research_service = ResearchService(
+        EscalationPolicy(research_enabled=True),
+        DisabledResearchProvider(),
+    )
+    orchestration_service.cognitive_research_drive = CognitiveResearchDrive(
+        enabled=True,
+        shadow_mode=False,
+    )
+    inquiry_service = MagicMock(spec=InquiryCandidateService)
+
+    async def propose(**kwargs):
+        assessment = kwargs["assessment"]
+        return InquiryCandidate(
+            user_id=kwargs["user_id"],
+            question=kwargs["question"],
+            source_type=InquirySourceType.WAKING,
+            source_cycle_ids=[kwargs["source_cycle_id"]],
+            assessment=assessment,
+            priority=assessment.drive_score,
+            expected_information_gain=assessment.signals.expected_information_gain,
+            shadow_mode=False,
+        )
+
+    inquiry_service.propose_waking = AsyncMock(side_effect=propose)
+    orchestration_service.inquiry_candidate_service = inquiry_service
+    packet = ResearchPacket(
+        request_id=uuid4(),
+        decision_id=uuid4(),
+        query="Please search the web for the latest institute director.",
+        status=ResearchPacketStatus.COMPLETED,
+        provider="grounded-test",
+        answer="The current director is verified.",
+        claims=[
+            ResearchClaim(
+                text="The current director is verified.",
+                source_ids=["s1"],
+                confidence=0.9,
+            )
+        ],
+        sources=[ResearchSource(source_id="s1", title="Institute", url="https://example.test")],
+        grounding_verified=True,
+    )
+    waking_service = MagicMock()
+
+    async def review(**kwargs):
+        assessment = kwargs["assessment"]
+        stored = InquiryCandidate(
+            inquiry_id=kwargs["inquiry_id"],
+            user_id=kwargs["user_id"],
+            question=packet.query,
+            source_type=InquirySourceType.WAKING,
+            assessment=assessment,
+            priority=assessment.drive_score,
+            expected_information_gain=assessment.signals.expected_information_gain,
+            status=InquiryStatus.RESEARCHED,
+            shadow_mode=False,
+        )
+        return SimpleNamespace(
+            candidate=stored,
+            disposition=InquiryReviewDisposition.RESEARCHED,
+            rationale="Grounded research completed.",
+            research_outcome=SimpleNamespace(packets=[packet]),
+        )
+
+    waking_service.review_candidate = AsyncMock(side_effect=review)
+    orchestration_service.waking_inquiry_service = waking_service
+    request = UserRequest(
+        user_id=uuid4(),
+        input_text=packet.query,
+        session_id=uuid4(),
+    )
+
+    cycle = await orchestration_service.orchestrate_cycle(request)
+
+    assert cycle.metadata["waking_inquiry_review"]["disposition"] == "researched"
+    assert cycle.metadata["research_packets"][0]["grounding_verified"] is True
+    orchestration_service.cognitive_brain.generate_response.assert_awaited_once()
+    call = orchestration_service.cognitive_brain.generate_response.await_args
+    assert call.kwargs["research_packets"] == (packet,)
+
 
 @pytest.mark.asyncio
 async def test_trigger_reflection_enqueues_task(orchestration_service, mock_background_task_queue, mock_self_reflection_discovery_engine):

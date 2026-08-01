@@ -22,6 +22,8 @@ from src.models.core_models import CognitiveCycle
 from src.services.memory_service import MemoryService
 from src.services.autobiographical_memory_system import AutobiographicalMemorySystem
 from src.services.llm_integration_service import LLMIntegrationService
+from src.models.research_models import CognitiveResearchSignals, InquirySourceType
+from src.services.inquiry_candidate_service import InquiryCandidateService
 
 logger = logging.getLogger(__name__)
 
@@ -37,12 +39,14 @@ class MemoryConsolidationService:
         memory_service: MemoryService,
         autobiographical_system: AutobiographicalMemorySystem,
         llm_service: LLMIntegrationService,
-        proactive_engine: Optional[Any] = None
+        proactive_engine: Optional[Any] = None,
+        inquiry_candidate_service: Optional[InquiryCandidateService] = None,
     ):
         self.memory_service = memory_service
         self.autobiographical_system = autobiographical_system
         self.llm_service = llm_service
         self.proactive_engine = proactive_engine  # Optional ProactiveEngagementEngine
+        self.inquiry_candidate_service = inquiry_candidate_service
         self.consolidation_jobs: Dict[str, MemoryConsolidationJob] = {}
         self.consolidation_interval_minutes = 30  # Run every 30 minutes
         self.last_consolidation: Dict[str, datetime] = {}  # user_id -> last consolidation time
@@ -170,6 +174,16 @@ class MemoryConsolidationService:
                 f"episodes={job.episodes_created}, semantic={job.semantic_concepts_extracted}, "
                 f"patterns={len(job.patterns_discovered)}"
             )
+
+            if self.inquiry_candidate_service and job.patterns_discovered:
+                try:
+                    await self._queue_dream_inquiries(job)
+                except Exception as error:
+                    logger.warning(
+                        "Dream inquiry handoff failed for consolidation job %s: %s",
+                        job.job_id,
+                        error,
+                    )
             
             # 🎯 After "dreaming", Bob might want to share interesting insights
             if self.proactive_engine and job.patterns_discovered:
@@ -197,6 +211,41 @@ class MemoryConsolidationService:
             logger.error(f"Consolidation job {job_id} failed: {e}", exc_info=True)
         
         return job
+
+    async def _queue_dream_inquiries(self, job: MemoryConsolidationJob) -> None:
+        """Persist unresolved offline discoveries; this path has no research-provider access."""
+        from uuid import UUID
+
+        markers = ("unknown", "unclear", "question", "missing", "contradiction", "anomaly", "needs research")
+        source_cycle_ids = []
+        for cycle_id in job.cycle_ids_to_process:
+            try:
+                source_cycle_ids.append(UUID(str(cycle_id)))
+            except (TypeError, ValueError):
+                continue
+        for pattern in job.patterns_discovered:
+            question = str(pattern).strip()
+            if not question or not any(marker in question.casefold() for marker in markers):
+                continue
+            await self.inquiry_candidate_service.propose_offline(
+                user_id=UUID(job.user_id),
+                question=question,
+                signals=CognitiveResearchSignals(
+                    epistemic_uncertainty=0.80,
+                    cognitive_conflict=0.70,
+                    novelty_prediction_error=0.75,
+                    temporal_volatility=0.15,
+                    task_stakes=max(0.45, min(0.85, float(job.priority))),
+                    persistence_after_local_attempts=0.40,
+                    expected_information_gain=0.80,
+                    privacy_risk=0.05,
+                    cloud_cost=0.25,
+                    metacognitive_gap=True,
+                ),
+                source_type=InquirySourceType.DREAM,
+                source_cycle_ids=source_cycle_ids,
+                metadata={"consolidation_job_id": job.job_id},
+            )
     
     async def _consolidate_episodic_to_semantic(self, job: MemoryConsolidationJob):
         """

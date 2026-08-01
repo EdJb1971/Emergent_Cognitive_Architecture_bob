@@ -36,6 +36,11 @@ from src.agents.critic_agent import CriticAgent
 from src.agents.discovery_agent import DiscoveryAgent
 from src.services.escalation_policy import EscalationPolicy
 from src.services.research_service import DisabledResearchProvider, ResearchService
+from src.services.cognitive_research_drive import CognitiveResearchDrive
+from src.services.inquiry_candidate_service import InquiryCandidateService
+from src.services.inquiry_candidate_store import InquiryCandidateStore
+from src.services.gemini_grounded_research_provider import GeminiGroundedResearchProvider
+from src.services.waking_inquiry_service import WakingInquiryService
 from src.services.audio_input_processor import AudioInputProcessor
 from src.providers import ModelExecutionScheduler, OllamaProbe
 from src.providers.factory import build_active_provider, build_synthesis_provider, enforce_local_only
@@ -217,12 +222,38 @@ async def lifespan(app: FastAPI):
         )
         logger.info("ProactiveEngagementEngine initialized successfully.")
 
+        app.state.cognitive_research_drive = CognitiveResearchDrive(
+            enabled=settings.COGNITIVE_RESEARCH_DRIVE_ENABLED,
+            shadow_mode=settings.COGNITIVE_RESEARCH_DRIVE_SHADOW_MODE,
+            deepen_threshold=settings.COGNITIVE_RESEARCH_DEEPEN_THRESHOLD,
+            uncertainty_threshold=settings.COGNITIVE_RESEARCH_UNCERTAINTY_THRESHOLD,
+            inquiry_threshold=settings.COGNITIVE_RESEARCH_INQUIRY_THRESHOLD,
+            research_threshold=settings.COGNITIVE_RESEARCH_EXTERNAL_THRESHOLD,
+            cooldown_minutes=settings.COGNITIVE_RESEARCH_COOLDOWN_MINUTES,
+            hysteresis_minutes=settings.COGNITIVE_RESEARCH_HYSTERESIS_MINUTES,
+        )
+        app.state.inquiry_candidate_store = InquiryCandidateStore(settings.INQUIRY_DB_PATH)
+        await app.state.inquiry_candidate_store.connect()
+        app.state.inquiry_candidate_service = InquiryCandidateService(
+            store=app.state.inquiry_candidate_store,
+            drive=app.state.cognitive_research_drive,
+            enabled=settings.INQUIRY_QUEUE_ENABLED,
+            ttl_days=settings.INQUIRY_TTL_DAYS,
+        )
+        logger.info(
+            "CognitiveResearchDrive initialized (enabled=%s, shadow=%s); inquiry queue enabled=%s.",
+            settings.COGNITIVE_RESEARCH_DRIVE_ENABLED,
+            app.state.cognitive_research_drive.shadow_mode,
+            settings.INQUIRY_QUEUE_ENABLED,
+        )
+
         # Initialize Memory Consolidation Service (now that proactive engine exists)
         app.state.memory_consolidation_service = MemoryConsolidationService(
             memory_service=app.state.memory_service,
             autobiographical_system=app.state.autobiographical_memory_system,
             llm_service=app.state.llm_service,
-            proactive_engine=app.state.proactive_engine
+            proactive_engine=app.state.proactive_engine,
+            inquiry_candidate_service=app.state.inquiry_candidate_service,
         )
         logger.info("MemoryConsolidationService initialized with proactive engagement.")
 
@@ -230,7 +261,8 @@ async def lifespan(app: FastAPI):
         app.state.self_reflection_discovery_engine = SelfReflectionAndDiscoveryEngine(
             llm_service=app.state.llm_service,
             memory_service=app.state.memory_service,
-            proactive_engine=app.state.proactive_engine
+            proactive_engine=app.state.proactive_engine,
+            inquiry_candidate_service=app.state.inquiry_candidate_service,
         )
         logger.info("SelfReflectionAndDiscoveryEngine initialized successfully.")
 
@@ -273,11 +305,31 @@ async def lifespan(app: FastAPI):
         logger.info("CriticAgent initialized successfully.")
 
         research_provider_choice = settings.RESEARCH_PROVIDER.strip().lower()
-        if research_provider_choice != "disabled":
+        if settings.LOCAL_ONLY_MODE and research_provider_choice != "disabled":
+            raise ConfigurationError(
+                detail="LOCAL_ONLY_MODE requires RESEARCH_PROVIDER=disabled."
+            )
+        if research_provider_choice == "disabled":
+            research_provider = DisabledResearchProvider()
+        elif research_provider_choice == "gemini":
+            if not settings.GEMINI_API_KEY:
+                raise ConfigurationError(
+                    detail="GEMINI_API_KEY is required when RESEARCH_PROVIDER=gemini."
+                )
+            if not settings.RESEARCH_MODEL.strip():
+                raise ConfigurationError(
+                    detail="RESEARCH_MODEL is required when RESEARCH_PROVIDER=gemini."
+                )
+            research_provider = GeminiGroundedResearchProvider(
+                api_key=settings.GEMINI_API_KEY,
+                model_name=settings.RESEARCH_MODEL,
+                timeout_seconds=settings.RESEARCH_TIMEOUT_SECONDS,
+            )
+        else:
             raise ConfigurationError(
                 detail=(
                     f"Unsupported RESEARCH_PROVIDER '{settings.RESEARCH_PROVIDER}'. "
-                    "This slice intentionally ships only the fail-closed 'disabled' provider."
+                    "Supported values are 'disabled' and 'gemini'."
                 )
             )
         app.state.escalation_policy = EscalationPolicy(
@@ -287,9 +339,15 @@ async def lifespan(app: FastAPI):
         )
         app.state.research_service = ResearchService(
             policy=app.state.escalation_policy,
-            provider=DisabledResearchProvider(),
+            provider=research_provider,
             max_queries=settings.RESEARCH_MAX_QUERIES,
             max_query_chars=settings.RESEARCH_MAX_QUERY_CHARS,
+        )
+        app.state.waking_inquiry_service = WakingInquiryService(
+            store=app.state.inquiry_candidate_store,
+            drive=app.state.cognitive_research_drive,
+            research_service=app.state.research_service,
+            require_user_approval=settings.INQUIRY_REQUIRE_USER_APPROVAL,
         )
         logger.info(
             "ResearchService initialized (enabled=%s, provider=%s, local_only=%s).",
@@ -351,7 +409,10 @@ async def lifespan(app: FastAPI):
             emotional_memory_service=app.state.emotional_memory_service,
             meta_cognitive_monitor=app.state.meta_cognitive_monitor,
             procedural_learning_service=app.state.procedural_learning_service,
-            metrics_service=app.state.metrics_service
+            metrics_service=app.state.metrics_service,
+            cognitive_research_drive=app.state.cognitive_research_drive,
+            inquiry_candidate_service=app.state.inquiry_candidate_service,
+            waking_inquiry_service=app.state.waking_inquiry_service,
         )
         logger.info("OrchestrationService (Central Agent) initialized successfully with Phase 1 & 2 Brain Architecture services.")
 
@@ -376,6 +437,10 @@ async def lifespan(app: FastAPI):
     # Perform any cleanup here if necessary
     if getattr(app.state, "memory_service", None):
         await app.state.memory_service.close()
+    if getattr(app.state, "inquiry_candidate_store", None):
+        await app.state.inquiry_candidate_store.close()
+    if getattr(app.state, "research_service", None):
+        await app.state.research_service.close()
     if getattr(app.state, "background_task_queue", None):
         await app.state.background_task_queue.shutdown()
 

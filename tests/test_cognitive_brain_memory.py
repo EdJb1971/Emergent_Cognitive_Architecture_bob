@@ -7,6 +7,12 @@ import pytest
 from src.models.core_models import CognitiveCycle
 from src.models.memory_models import ConversationSummary, MemoryAccessStats
 from src.services.cognitive_brain import CognitiveBrain
+from src.models.research_models import (
+    ResearchClaim,
+    ResearchPacket,
+    ResearchPacketStatus,
+    ResearchSource,
+)
 
 
 @pytest.fixture
@@ -68,3 +74,49 @@ async def test_response_generation_uses_memory_context(llm_service, memory_servi
     memory_service.summary_manager.get_or_create_summary.assert_awaited_once_with(cycle.user_id)
     memory_service.query_memory.assert_awaited_once()
     memory_service.get_access_stats.assert_awaited_once_with(cycle.user_id)
+
+
+@pytest.mark.asyncio
+async def test_grounded_research_is_bounded_in_prompt_and_sources_are_deterministic(
+    llm_service, memory_service
+):
+    cycle = CognitiveCycle(
+        user_id=uuid4(),
+        session_id=uuid4(),
+        user_input="What is current?",
+    )
+    packet = ResearchPacket(
+        request_id=uuid4(),
+        decision_id=uuid4(),
+        query=cycle.user_input,
+        status=ResearchPacketStatus.COMPLETED,
+        provider="grounded-test",
+        answer="The reviewed release is current.",
+        claims=[
+            ResearchClaim(
+                text="The reviewed release is current.",
+                source_ids=["s1"],
+                confidence=0.9,
+            )
+        ],
+        sources=[
+            ResearchSource(
+                source_id="s1",
+                title="Authoritative release page",
+                url="https://example.test/release",
+            )
+        ],
+        grounding_verified=True,
+    )
+    brain = CognitiveBrain(llm_service=llm_service, memory_service=memory_service)
+
+    response, metadata, _signals = await brain.generate_response(
+        cycle,
+        research_packets=(packet,),
+    )
+
+    prompt = llm_service.generate_text.call_args.kwargs["prompt"]
+    assert "Verified claim [R1]: The reviewed release is current." in prompt
+    assert "https://example.test/release" in response
+    assert "[R1]" in response
+    assert "grounded_research" in metadata.strategies

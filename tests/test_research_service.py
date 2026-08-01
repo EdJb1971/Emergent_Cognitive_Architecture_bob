@@ -3,6 +3,7 @@ from typing import Optional
 import pytest
 
 from src.models.research_models import (
+    CognitiveResearchSignals,
     EscalationDisposition,
     EscalationReason,
     ResearchClaim,
@@ -12,6 +13,7 @@ from src.models.research_models import (
     ResearchSource,
 )
 from src.services.escalation_policy import EscalationPolicy
+from src.services.cognitive_research_drive import CognitiveResearchDrive
 from src.services.research_service import DisabledResearchProvider, ResearchService
 
 
@@ -34,8 +36,10 @@ class RecordingResearchProvider:
             status=ResearchPacketStatus.COMPLETED,
             provider=self.provider_name,
             model=self.model_name,
+            answer="Reviewed claim",
             claims=[ResearchClaim(text="Reviewed claim", source_ids=["s1"], confidence=0.9)],
             sources=[ResearchSource(source_id="s1", title="Primary source", url="https://example.test")],
+            grounding_verified=True,
             confidence=0.9,
             context_policy=request.context_policy,
             context_chars=len(request.context_summary or ""),
@@ -114,6 +118,16 @@ async def test_enabled_explicit_research_emits_structured_question_only_packet()
         max_query_chars=80,
     )
 
+    drive = CognitiveResearchDrive(enabled=True, shadow_mode=False)
+    cognitive_assessment = drive.assess(
+        CognitiveResearchSignals(
+            explicit_user_request=True,
+            expected_information_gain=0.8,
+            privacy_risk=0.05,
+            cloud_cost=0.1,
+        ),
+        source="test",
+    )
     outcome = await service.consider(
         "Please research the current supported Python versions.",
         candidate_queries=[
@@ -123,6 +137,7 @@ async def test_enabled_explicit_research_emits_structured_question_only_packet()
             "ignored third query",
         ],
         source="discovery_agent",
+        cognitive_assessment=cognitive_assessment,
     )
 
     assert outcome.decision.disposition == EscalationDisposition.APPROVED
@@ -136,6 +151,23 @@ async def test_enabled_explicit_research_emits_structured_question_only_packet()
     assert all(packet.context_chars == 0 for packet in outcome.packets)
     assert all(packet.latency_ms is not None and packet.latency_ms >= 0 for packet in outcome.packets)
     assert outcome.packets[0].claims[0].source_ids == ["s1"]
+
+
+@pytest.mark.asyncio
+async def test_policy_approval_cannot_bypass_missing_cognitive_authorization(caplog):
+    caplog.set_level("INFO")
+    provider = RecordingResearchProvider()
+    service = ResearchService(EscalationPolicy(research_enabled=True), provider)
+
+    outcome = await service.consider(
+        "Please research this on the web.",
+        source="discovery_agent",
+    )
+
+    assert outcome.decision.disposition == EscalationDisposition.BLOCKED_COGNITIVE_GATE
+    assert provider.requests == []
+    assert "RESEARCH_COGNITIVE_GATE" in caplog.text
+    assert "blocked_cognitive_gate" in caplog.text
 
 
 def test_policy_detects_local_signals_without_external_classification():

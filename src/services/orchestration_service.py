@@ -8,6 +8,7 @@ from datetime import datetime # CQ-003 Fix: Import datetime
 from src.core.exceptions import AgentServiceException, APIException
 from src.models.core_models import UserRequest, AgentOutput, CognitiveCycle, ResponseMetadata, OutcomeSignals, ErrorAnalysis
 from src.models.agent_models import AttentionDirective
+from src.models.research_models import CognitiveEffortAction, ResearchPacketStatus
 from src.agents.perception_agent import PerceptionAgent
 from src.agents.emotional_agent import EmotionalAgent
 from src.agents.memory_agent import MemoryAgent
@@ -16,6 +17,9 @@ from src.agents.creative_agent import CreativeAgent
 from src.agents.critic_agent import CriticAgent
 from src.agents.discovery_agent import DiscoveryAgent
 from src.services.research_service import ResearchService
+from src.services.cognitive_research_drive import CognitiveResearchDrive
+from src.services.inquiry_candidate_service import InquiryCandidateService
+from src.services.waking_inquiry_service import WakingInquiryService
 from src.services.audio_input_processor import AudioInputProcessor
 from src.models.multimodal_models import AudioAnalysis
 from src.services.cognitive_brain import CognitiveBrain
@@ -81,7 +85,10 @@ class OrchestrationService:
         emotional_memory_service: Optional[EmotionalMemoryService] = None,
         meta_cognitive_monitor: Optional[MetaCognitiveMonitor] = None,
         procedural_learning_service: Optional[ProceduralLearningService] = None,
-        metrics_service: Optional[MetricsService] = None
+        metrics_service: Optional[MetricsService] = None,
+        cognitive_research_drive: Optional[CognitiveResearchDrive] = None,
+        inquiry_candidate_service: Optional[InquiryCandidateService] = None,
+        waking_inquiry_service: Optional[WakingInquiryService] = None,
     ):
         self.perception_agent = perception_agent
         self.emotional_agent = emotional_agent
@@ -106,6 +113,9 @@ class OrchestrationService:
         self.meta_cognitive_monitor = meta_cognitive_monitor
         self.procedural_learning_service = procedural_learning_service
         self.metrics_service = metrics_service
+        self.cognitive_research_drive = cognitive_research_drive
+        self.inquiry_candidate_service = inquiry_candidate_service
+        self.waking_inquiry_service = waking_inquiry_service
         self.session_start = datetime.utcnow()  # Track session start for contextual encoding
         logger.info("OrchestrationService (Central Agent) initialized with all specialized agents, Cognitive Brain, Memory Service, Background Task Queue, Self-Reflection & Discovery Engine, Working Memory Buffer, Thalamus Gateway, Conflict Monitor, Contextual Memory Encoder, Emotional Memory Service, Meta-Cognitive Monitor, optional Attention Controller, and optional Reinforcement Learning Service.")
 
@@ -669,6 +679,7 @@ class OrchestrationService:
 
         # --- Step 1.75: Meta-Cognitive Assessment (Pre-Response Gate) ---
         meta_cognitive_override = None
+        research_packets = []
         if self.meta_cognitive_monitor:
             _meta_start = time.perf_counter()
             try:
@@ -685,25 +696,104 @@ class OrchestrationService:
                     "explanation": explanation
                 }
 
+                research_decision = None
+                if self.research_service:
+                    research_decision = self.research_service.decide(
+                        effective_input_text,
+                        source="meta_cognitive_monitor",
+                        confidence=confidence_score,
+                        named_fact_missing=gap_type == GapType.TOPIC_UNKNOWN,
+                        metacognitive_gap=recommendation == ActionRecommendation.SEARCH_FIRST,
+                    )
+                    cognitive_cycle.metadata["research_escalation"] = research_decision.model_dump(mode="json")
+
+                if self.cognitive_research_drive:
+                    drift_score = max(
+                        (float(item.get("drift_score", 0.0)) for item in attention_directives),
+                        default=0.0,
+                    )
+                    policy_reasons = research_decision.reasons if research_decision else []
+                    signals = self.cognitive_research_drive.build_waking_signals(
+                        confidence=confidence_score,
+                        coherence_score=final_conflict_report.coherence_score,
+                        conflict_severities=[conflict.severity for conflict in final_conflict_report.conflicts],
+                        novelty_score=drift_score,
+                        urgency=input_routing.quick_analysis.urgency,
+                        policy_reasons=policy_reasons,
+                        # Attempts are control-plane state. Never derive them from user metadata.
+                        local_attempts=0,
+                        needs_clarification=recommendation == ActionRecommendation.ASK_CLARIFICATION,
+                    )
+                    drive_assessment = self.cognitive_research_drive.assess(
+                        signals,
+                        source="waking_cognitive_cycle",
+                        user_id=str(user_request.user_id),
+                    )
+                    cognitive_cycle.metadata["cognitive_research_drive"] = drive_assessment.model_dump(mode="json")
+
+                    if (
+                        self.inquiry_candidate_service
+                        and drive_assessment.recommended_action
+                        in {CognitiveEffortAction.QUEUE_INQUIRY, CognitiveEffortAction.AUTHORIZE_RESEARCH}
+                    ):
+                        inquiry = await self.inquiry_candidate_service.propose_waking(
+                            user_id=user_request.user_id,
+                            question=effective_input_text[:1000],
+                            hypothesis=explanation[:2000] if explanation else None,
+                            assessment=drive_assessment,
+                            source_cycle_id=cognitive_cycle.cycle_id,
+                        )
+                        if inquiry:
+                            cognitive_cycle.metadata["inquiry_candidate"] = {
+                                "inquiry_id": str(inquiry.inquiry_id),
+                                "status": inquiry.status.value,
+                                "priority": inquiry.priority,
+                                "shadow_mode": inquiry.shadow_mode,
+                            }
+                            if (
+                                self.waking_inquiry_service
+                                and drive_assessment.effective_action
+                                == CognitiveEffortAction.AUTHORIZE_RESEARCH
+                                and recommendation
+                                in {ActionRecommendation.ANSWER, ActionRecommendation.SEARCH_FIRST}
+                            ):
+                                _research_start = time.perf_counter()
+                                review = await self.waking_inquiry_service.review_candidate(
+                                    user_id=user_request.user_id,
+                                    inquiry_id=inquiry.inquiry_id,
+                                    assessment=drive_assessment,
+                                    user_approved=signals.explicit_user_request,
+                                )
+                                timer.record(
+                                    "grounded_research",
+                                    (time.perf_counter() - _research_start) * 1000.0,
+                                )
+                                cognitive_cycle.metadata["waking_inquiry_review"] = {
+                                    "inquiry_id": str(review.candidate.inquiry_id),
+                                    "status": review.candidate.status.value,
+                                    "disposition": review.disposition.value,
+                                    "rationale": review.rationale,
+                                }
+                                if review.research_outcome:
+                                    research_packets = [
+                                        packet
+                                        for packet in review.research_outcome.packets
+                                        if packet.status == ResearchPacketStatus.COMPLETED
+                                        and packet.grounding_verified
+                                    ]
+                                    cognitive_cycle.metadata["research_packets"] = [
+                                        packet.model_dump(mode="json") for packet in research_packets
+                                    ]
+
                 # Handle non-answer recommendations
                 if recommendation != ActionRecommendation.ANSWER:
                     if recommendation == ActionRecommendation.SEARCH_FIRST:
-                        if self.research_service:
-                            decision = self.research_service.decide(
-                                effective_input_text,
-                                source="meta_cognitive_monitor",
-                                confidence=confidence_score,
-                                named_fact_missing=gap_type == GapType.TOPIC_UNKNOWN,
-                                metacognitive_gap=True,
-                            )
-                            cognitive_cycle.metadata["research_escalation"] = decision.model_dump(mode="json")
-                            logger.info(
-                                "Meta-cognitive research recommendation recorded as %s - %s",
-                                decision.disposition.value,
-                                explanation,
-                            )
-                        else:
-                            logger.warning("Meta-cognitive research recommendation had no ResearchService boundary.")
+                        disposition = research_decision.disposition.value if research_decision else "unavailable"
+                        logger.info(
+                            "Meta-cognitive research recommendation recorded as %s - %s",
+                            disposition,
+                            explanation,
+                        )
 
                     elif recommendation in [ActionRecommendation.ASK_CLARIFICATION, ActionRecommendation.DECLINE_POLITELY]:
                         # Generate uncertainty response
@@ -742,7 +832,13 @@ class OrchestrationService:
                     engagement_potential=0.6
                 )
             else:
-                final_response_text, response_metadata, outcome_signals = await self.cognitive_brain.generate_response(cognitive_cycle)
+                if research_packets:
+                    final_response_text, response_metadata, outcome_signals = await self.cognitive_brain.generate_response(
+                        cognitive_cycle,
+                        research_packets=tuple(research_packets),
+                    )
+                else:
+                    final_response_text, response_metadata, outcome_signals = await self.cognitive_brain.generate_response(cognitive_cycle)
 
             cognitive_cycle.final_response = final_response_text
             cognitive_cycle.response_metadata = response_metadata

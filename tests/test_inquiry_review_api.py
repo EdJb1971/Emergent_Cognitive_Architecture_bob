@@ -23,6 +23,7 @@ from src.services.escalation_policy import EscalationPolicy
 from src.services.inquiry_candidate_store import InquiryCandidateStore
 from src.services.inquiry_review_service import InquiryReviewService
 from src.services.research_calibration_ledger import ResearchCalibrationLedger
+from src.services.research_runtime_control import ResearchRuntimeControl
 from src.services.research_service import DisabledResearchProvider, ResearchService
 from src.services.waking_inquiry_service import WakingInquiryService
 
@@ -34,10 +35,13 @@ async def _app_and_candidate(tmp_path, *, failed=False):
     await store.connect()
     await ledger.connect()
     drive = CognitiveResearchDrive(enabled=False, shadow_mode=True)
+    research = ResearchService(
+        EscalationPolicy(research_enabled=False), DisabledResearchProvider()
+    )
     waking = WakingInquiryService(
         store,
         drive,
-        ResearchService(EscalationPolicy(research_enabled=False), DisabledResearchProvider()),
+        research,
         ledger=ledger,
     )
     service = InquiryReviewService(store, waking, ledger)
@@ -70,8 +74,46 @@ async def _app_and_candidate(tmp_path, *, failed=False):
     app.include_router(router)
     app.state.inquiry_review_service = service
     app.state.research_calibration_ledger = ledger
+    app.state.research_runtime_control = ResearchRuntimeControl(
+        research_service=research,
+        drive=drive,
+        waking_service=waking,
+        ledger=ledger,
+        api_key=None,
+        model_name="gemini-test",
+        timeout_seconds=5,
+        local_only=False,
+    )
     app.dependency_overrides[get_api_key_user_id] = lambda: SYSTEM_USER_ID
     return app, candidate
+
+
+@pytest.mark.asyncio
+async def test_runtime_api_exposes_safe_controls_and_audits_emergency_stop(tmp_path):
+    app, _ = await _app_and_candidate(tmp_path)
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        initial = await client.get("/api/research/runtime")
+        unavailable = await client.put(
+            "/api/research/runtime",
+            json={"provider_enabled": True, "reason": "operator request"},
+        )
+        stopped = await client.put(
+            "/api/research/runtime",
+            json={"emergency_stop": True, "reason": "operator stop"},
+        )
+        ledger = await client.get(
+            "/api/research/ledger", params={"event_types": "runtime_control_changed"}
+        )
+
+    assert initial.status_code == 200
+    assert initial.json()["automatic_non_explicit_enabled"] is False
+    assert initial.json()["explicit_approval_required"] is True
+    assert unavailable.status_code == 409
+    assert stopped.status_code == 200
+    assert stopped.json()["emergency_stop"] is True
+    assert ledger.status_code == 200
+    assert ledger.json()["count"] == 1
 
 
 @pytest.mark.asyncio

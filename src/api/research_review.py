@@ -19,11 +19,14 @@ from src.models.research_models import (
     ResearchLedgerEvent,
     ResearchLedgerEventType,
     ResearchLedgerResponse,
+    ResearchRuntimeState,
+    ResearchRuntimeUpdateRequest,
     SourceQualityFeedbackRequest,
     WakingInquiryReviewOutcome,
 )
 from src.services.inquiry_review_service import InquiryReviewService
 from src.services.research_calibration_ledger import ResearchCalibrationLedger
+from src.services.research_runtime_control import ResearchRuntimeControl
 
 
 router = APIRouter(prefix="/api/research", tags=["research-governance"])
@@ -49,6 +52,16 @@ def _ledger(request: Request) -> ResearchCalibrationLedger:
     return ledger
 
 
+def _runtime_control(request: Request) -> ResearchRuntimeControl:
+    control = getattr(request.app.state, "research_runtime_control", None)
+    if control is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Research runtime control is not initialized.",
+        )
+    return control
+
+
 def _translate_domain_error(error: Exception) -> HTTPException:
     if isinstance(error, KeyError):
         return HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=error.args[0])
@@ -71,6 +84,27 @@ async def list_inquiries(
         user_id, statuses=statuses, limit=limit
     )
     return InquiryListResponse(inquiries=inquiries, count=len(inquiries))
+
+
+@router.get("/runtime", response_model=ResearchRuntimeState)
+async def get_research_runtime(
+    request: Request,
+    user_id: UUID = Depends(get_api_key_user_id),
+) -> ResearchRuntimeState:
+    del user_id
+    return _runtime_control(request).get_state()
+
+
+@router.put("/runtime", response_model=ResearchRuntimeState)
+async def update_research_runtime(
+    body: ResearchRuntimeUpdateRequest,
+    request: Request,
+    user_id: UUID = Depends(get_api_key_user_id),
+) -> ResearchRuntimeState:
+    try:
+        return await _runtime_control(request).update(user_id, body)
+    except (KeyError, ValueError) as error:
+        raise _translate_domain_error(error) from error
 
 
 @router.get("/inquiries/{inquiry_id}", response_model=InquiryDetail)

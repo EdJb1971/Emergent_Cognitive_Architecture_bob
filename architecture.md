@@ -17,7 +17,7 @@ This document describes the Emergent Cognitive Architecture (ECA), a brain-inspi
 | Memory, self-model, ToM, RL, procedural learning | Implemented with graceful-degradation paths | Services are instantiated and invoked from the cycle. Failures in optional enrichment paths are logged and the cycle continues. |
 | Attention controller | Implemented, default inactive | It uses lightweight heuristics. It emits directives before Stage 1 and after Stage 1; routing changes only when `ATTENTION_CONTROLLER_ENABLED=true` and `ATTENTION_CONTROLLER_SHADOW_MODE=false`. |
 | Memory consolidation | Implemented service, not automatically scheduled | `MemoryConsolidationService` can create and execute jobs, but app startup does not start a periodic 30-minute loop or enqueue jobs automatically. |
-| Metrics/dashboard | Partial | REST metrics plus authenticated research review/calibration endpoints exist. The React dashboard does not yet render the inquiry/calibration surface. Metrics ChromaDB initialization is asynchronous and not awaited at startup. The WebSocket sends an initial snapshot then waits for client messages; broadcast updates are not implemented. |
+| Metrics/dashboard | Research operations implemented; metric streaming partial | The responsive React operator console renders research runtime controls, inquiry review, calibration labeling/strata, verified-source feedback, the hash-chained ledger, and system telemetry. Metrics ChromaDB initialization is asynchronous and not awaited at startup. The WebSocket sends an initial snapshot then waits for client messages; broadcast updates are not implemented. |
 | Multimodal input | Partial | Audio transcription is wired into the cycle. `VisualInputProcessor` exists but is not wired into application startup or the cognitive cycle. |
 | Provider selection | Implemented, configuration-driven | `build_active_provider()` in `src/providers/factory.py` resolves generation, embedding, moderation, and synthesis independently. Mixed selections are composed by `CompositeProvider`; a uniform selection returns the single adapter. Unknown values fail startup. |
 | End-to-end cycle | Verified running | First real `/chat` cycles completed on August 1, 2026. Fully local: 103s. Local agents with Gemini synthesis: 44.8s first turn, 66.8s with memory context. Memory recall across turns confirmed (name and detail correctly retrieved from a prior cycle). |
@@ -31,9 +31,9 @@ This document describes the Emergent Cognitive Architecture (ECA), a brain-inspi
 | Vector migration | Implemented; no primary collection currently needs migration | `python -m src.tools.reembed` rebuilds a collection into a new identity-stamped collection without modifying its source and can resume by skipping existing ids. On August 2, dry-runs correctly refused both primary collections because they already hold the active `ollama/embeddinggemma:latest@768d` vector identity. There is no retained Gemini primary collection to compare or migrate. |
 | Retrieval evaluation | Reproducible local baseline measured | `python -m src.tools.eval_retrieval --seeded --fixture tests/fixtures/memory_retrieval_seeded.json` embeds 25 synthetic records into an ephemeral, identity-stamped Chroma collection and evaluates 50 reviewed queries without reading or changing personal memory. `embeddinggemma:latest` measured recall, MRR, and NDCG of `1.000` at both k=1 and k=5 on August 2; a repeated run produced the same result and the seeded collection did not appear in the persistent database. The earlier mutable 12-query personal-database run remains a smoke result (`0.958`/`0.958`/`0.952` at k=5), not the canonical benchmark. Expected-fact labels are present for future application-level evaluation; current metrics cover direct Chroma ranking only. |
 | Application memory scoring | Repaired and live-verified | The primary collections use Chroma's default squared-L2 distance, but `MemoryService` previously applied a discontinuous cosine-style conversion: a closer `0.865` result scored `0.135` while a worse `1.088` result scored `0.479`. Metric-aware conversion now maps normalized L2 vectors onto cosine-comparable scores. A matched live query changed from zero Cognitive Brain memories and a failed clarification to three LTM memories and correct recall of Tom and Leeds. |
-| Research escalation | Complete guarded round trip and review API; disabled/shadowed by default | `CognitiveResearchDrive` combines bounded uncertainty, conflict, novelty/prediction error, volatility, stakes, persistence, expected information gain, privacy/cost inhibition, hysteresis, and cooldown. `InquiryCandidateStore` durably de-duplicates waking/reflection/dream inquiries and tracks waking review, approval, success, and retryable failure. Authenticated APIs list, inspect, approve, dismiss, and retry inquiries. `WakingInquiryService` can resolve locally, defer, require user approval, or cross both the cognitive and policy gates. `GeminiGroundedResearchProvider` uses Google Search grounding and accepts only URL-annotated claims; `ResearchService` independently validates IDs, provider identity, question-only context, URLs, source references, and bounds. Cognitive Brain receives only verified packets and emits deterministic source links. A hash-chained append-only ledger captures review, policy, packet, source-feedback, and calibration events. Defaults remain `RESEARCH_ENABLED=false`, provider `disabled`, and cognitive shadow mode. |
+| Research escalation | Complete guarded round trip, review surface, and runtime control plane; disabled/shadowed by default | `CognitiveResearchDrive` combines bounded uncertainty, conflict, novelty/prediction error, volatility, stakes, persistence, expected information gain, privacy/cost inhibition, hysteresis, and cooldown. `InquiryCandidateStore` durably de-duplicates waking/reflection/dream inquiries and tracks waking review, approval, success, and retryable failure. The operator UI and authenticated APIs list, inspect, approve, dismiss, and retry inquiries. `WakingInquiryService` can resolve locally, defer, require user approval, or cross both the cognitive and policy gates. `GeminiGroundedResearchProvider` uses Google Search grounding and accepts only URL-annotated claims; `ResearchService` independently validates IDs, provider identity, question-only context, URLs, source references, and bounds. Cognitive Brain receives only verified packets and emits deterministic source links. A database-enforced append-only, hash-chained ledger captures reviews, policy decisions, packets, source feedback, calibration labels, and runtime changes. Provider access, active control, and automatic non-explicit research are separately interlocked UI toggles; the final transition requires typed confirmation, and emergency stop disables all three. State is restored from the ledger after restart. Defaults remain provider-disabled, controller-shadowed, and explicit-approval-required. |
 | Salience network | Planned | There is a feature flag only; no `SalienceNetwork` implementation is present. |
-| Validation | Repaired baseline | The repository virtual environment runs `154 passed, 3 skipped` on August 2, 2026. The research-drive fixture has 20 reviewed synthetic cases and measures action accuracy `1.000`, escalation precision `1.000`, and escalation recall `1.000`. A guarded live Gemini smoke test returned 2 verified claims from 2 URL sources after 2 searches in `5567.7ms`. This is a deterministic regression and connectivity baseline, not proof of real-world calibration or biological equivalence. The three skipped root-level async tests are not collected by an async test plugin. |
+| Validation | Repaired baseline | The repository virtual environment runs `157 passed, 3 skipped` on August 2, 2026. The React production build compiles successfully with Node `v24.18.1`/npm `11.16.0`; desktop and responsive operator layouts were rendered against the live local API. The research-drive fixture has 20 reviewed synthetic cases and measures action accuracy `1.000`, escalation precision `1.000`, and escalation recall `1.000`. A guarded live Gemini smoke test returned 2 verified claims from 2 URL sources after 2 searches in `5567.7ms`. This is a deterministic regression and connectivity baseline, not proof of real-world calibration or biological equivalence. The three skipped root-level async tests are not collected by an async test plugin. |
 
 The phase sections below retain the design intent. Treat statements about autonomous background execution, measured performance improvements, or real-time streaming as planned unless this status section explicitly marks them implemented.
 
@@ -932,7 +932,7 @@ The guarded August 2 live smoke used `gemini-3.5-flash-lite` after all fake-prov
 
 `ResearchCalibrationLedger` shares the local inquiry SQLite database but uses its own indexed table. Events are append-only at both the service and database layers: SQLite triggers reject `UPDATE` and `DELETE`. Every row includes the previous event hash and its own SHA-256 hash, making accidental mutation detectable. Review requests and outcomes, fresh waking reassessments, policy decisions, complete provider packets, source feedback, and calibration labels are separate events. Labels are never edits; when reviewers correct a label, summaries use the latest event while retaining the earlier history.
 
-During every real waking cycle in shadow mode, `OrchestrationService` persists the full controller assessment with its cycle and assessment IDs and exposes the ledger event ID in cycle metadata. Ledger failure is observational and fails safely without breaking the cognitive response. These records make real-cycle labeling possible, but they do not themselves authorize research. The calibration summary deliberately returns `automatic_non_explicit_research_eligible=false`; moving non-explicit research out of shadow requires a separate reviewed decision after enough representative labels have accumulated. The backend review/calibration API is complete; a dedicated React operator view and actual longitudinal real-cycle evidence remain pending.
+During every real waking cycle in shadow mode, `OrchestrationService` persists the full controller assessment with its cycle and assessment IDs and exposes the ledger event ID in cycle metadata. Ledger failure is observational and fails safely without breaking the cognitive response. These records make real-cycle labeling possible, but they do not themselves authorize research. The calibration summary deliberately returns `automatic_non_explicit_research_eligible=false` until representative evidence exists; calibration never changes runtime posture by itself. The authenticated React operator console is complete and permits a separate deliberate activation through staged controls and typed confirmation. Actual longitudinal real-cycle evidence remains pending.
 
 **Agent Output Example:**
 ```python
@@ -2396,7 +2396,7 @@ useEffect(() => {
 
 ## Frontend Architecture
 
-The frontend is a single-page application (SPA) built with React 18 and TypeScript, featuring a comprehensive scientific dashboard for real-time cognitive performance monitoring.
+The frontend is a responsive React 18 and TypeScript single-page application. Its primary surfaces are the conversational shell and a full-screen, authenticated operator console for research governance and cognitive telemetry.
 
 ### Project Structure
 
@@ -2407,11 +2407,13 @@ The frontend is a single-page application (SPA) built with React 18 and TypeScri
 ├── src/
 │   ├── api/
 │   │   ├── chatApi.ts       # Chat API communication layer (Axios + API key)
-│   │   └── dashboardApi.ts  # Dashboard metrics API layer (WebSocket + REST)
+│   │   ├── dashboardApi.ts  # Dashboard metrics API layer (WebSocket + REST)
+│   │   └── researchApi.ts   # Runtime, inquiry, ledger, and calibration API layer
 │   ├── components/
 │   │   ├── ChatInput.tsx    # User input component with multimodal support
 │   │   ├── ChatWindow.tsx   # Message display component
-│   │   ├── Dashboard.tsx    # Main scientific dashboard modal with tabbed interface
+│   │   ├── Dashboard.tsx    # Full-screen operator console and navigation
+│   │   ├── ResearchCommandCenter.tsx # Research controls, review, calibration, and ledger
 │   │   ├── StatisticalAnalysis.tsx # Advanced statistical analysis and research export tools
 │   │   ├── MetricsCard.tsx  # Reusable metric display component
 │   │   ├── RealTimeChart.tsx # Canvas-based performance visualization
@@ -2419,7 +2421,8 @@ The frontend is a single-page application (SPA) built with React 18 and TypeScri
 │   │   └── AgentActivity.tsx # Agent coordination heatmap
 │   ├── types/
 │   │   ├── chat.ts          # Chat TypeScript interfaces
-│   │   └── dashboard.ts     # Dashboard metrics interfaces
+│   │   ├── dashboard.ts     # Dashboard metrics interfaces
+│   │   └── research.ts      # Typed research governance contracts
 │   ├── App.tsx              # Main application component with dashboard toggle
 │   ├── index.tsx            # Application entry point
 │   └── index.css            # Tailwind CSS styles
@@ -2436,7 +2439,8 @@ The frontend is a single-page application (SPA) built with React 18 and TypeScri
 *   **`ChatInput.tsx`:** Multimodal text input with image/audio upload, accessibility-compliant form elements
 
 #### Scientific Dashboard Components
-*   **`Dashboard.tsx`:** Main modal dashboard with tabbed interface (Overview/Statistical Analysis), REST metrics, and an initial WebSocket snapshot
+*   **`Dashboard.tsx`:** Full-screen operator shell with Command, Inquiries, Calibration, Ledger, and System sections
+*   **`ResearchCommandCenter.tsx`:** Interlocked provider/controller/automation toggles, typed activation confirmation, emergency stop, waking inquiry decisions, independent shadow labels, editable verified-source reviews, calibration strata, and append-only ledger history
 *   **`StatisticalAnalysis.tsx`:** Advanced statistical analysis tools with research export capabilities (CSV/JSON), significance testing, and automated report generation
 *   **`MetricsCard.tsx`:** Reusable component for displaying key performance indicators with trend indicators
 *   **`RealTimeChart.tsx`:** Canvas-based performance visualization with multiple metric overlays
@@ -2446,14 +2450,16 @@ The frontend is a single-page application (SPA) built with React 18 and TypeScri
 #### API Layer
 *   **`api/chatApi.ts`:** Chat communication module using Axios with secure API key handling
 *   **`api/dashboardApi.ts`:** Dashboard metrics API with WebSocket connections and REST endpoints
+*   **`api/researchApi.ts`:** Authenticated typed client for runtime controls, inquiry review, source feedback, calibration labels/summaries, and ledger history
 
 ### Dashboard Integration
 
-The dashboard is integrated into the chat interface through a toggle button. It supports REST-based metrics views; live update broadcasting remains planned. Key features include:
+The operator console opens from the chat header, `Ctrl/Cmd+K`, or the `?control` deep link. It supports REST-based governance and metric views; live metric broadcasting remains planned. Key features include:
 
 - **Initial WebSocket snapshot**; continuous server-side metric broadcasts are not implemented
 - **Configurable refresh intervals** (1s to 60s)
-- **Modal overlay design** that doesn't interfere with chat functionality
+- **Full-screen operational overlay** with desktop sidebar and compact mobile navigation
+- **Ledger-restored runtime posture** with staged activation and immediate containment controls
 - **Responsive design** optimized for both desktop and mobile viewing
 - **Accessibility compliance** with proper ARIA labels and keyboard navigation
 

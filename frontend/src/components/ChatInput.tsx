@@ -100,9 +100,9 @@ const ChatInput: React.FC<ChatInputProps> = ({ onSendMessage, isLoading }) => {
   };
 
   return (
-    <div className="p-4 bg-white dark:bg-gray-900 border-t border-gray-200 dark:border-gray-700 flex flex-col space-y-2">
+    <div className="composer-wrap">
       {(selectedImage || selectedAudio) && (
-        <div className="flex items-center space-x-2 text-sm text-gray-600 dark:text-gray-400">
+        <div className="composer-attachments">
           {selectedImage && (
             <span className="flex items-center">
               {React.createElement(FiIcons.FiImage as any, { className: "mr-1", size: 16 })} Image attached
@@ -117,11 +117,11 @@ const ChatInput: React.FC<ChatInputProps> = ({ onSendMessage, isLoading }) => {
           )}
         </div>
       )}
-      <div className="flex items-center space-x-2">
+      <div className="composer">
         <input
           type="text"
-          className="flex-1 p-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-800 dark:text-gray-100"
-          placeholder="Type your message..."
+          className="composer-input"
+          placeholder="Share a thought, question, or problem…"
           value={inputText}
           onChange={handleTextChange}
           onKeyPress={handleKeyPress}
@@ -138,7 +138,7 @@ const ChatInput: React.FC<ChatInputProps> = ({ onSendMessage, isLoading }) => {
         />
         <button
           onClick={() => fileInputRef.current?.click()}
-          className="p-2 bg-gray-200 dark:bg-gray-700 rounded-lg hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors duration-200"
+          className="composer-tool"
           title="Attach Image"
           disabled={isLoading || isRecording}
         >
@@ -156,9 +156,7 @@ const ChatInput: React.FC<ChatInputProps> = ({ onSendMessage, isLoading }) => {
         />
         <button
           onClick={isRecording ? stopRecording : startRecording}
-          className={`p-2 rounded-lg transition-colors duration-200 ${
-            isRecording ? 'bg-red-500 hover:bg-red-600 text-white' : 'bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600'
-          }`}
+          className={`composer-tool ${isRecording ? 'is-recording' : ''}`}
           title={isRecording ? "Stop Recording" : "Record Audio"}
           disabled={isLoading}
         >
@@ -167,7 +165,7 @@ const ChatInput: React.FC<ChatInputProps> = ({ onSendMessage, isLoading }) => {
 
         <button
           onClick={handleSend}
-          className="p-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors duration-200"
+          className="composer-send"
           title="Send Message"
           disabled={isLoading || (!inputText.trim() && !selectedImage && !selectedAudio)}
         >

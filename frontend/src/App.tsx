@@ -1,5 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { v4 as uuidv4 } from 'uuid';
+import { FiActivity, FiCommand, FiLock, FiRadio } from 'react-icons/fi';
 import ChatWindow from 'components/ChatWindow';
 import ChatInput from 'components/ChatInput';
 import Dashboard from 'components/Dashboard';
@@ -10,72 +11,67 @@ import { getProactiveMessage, recordProactiveReaction } from 'api/dashboardApi';
 const App: React.FC = () => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [isLoading, setIsLoading] = useState(false);
-  const [userId, setUserId] = useState<string>('');
-  const [sessionId, setSessionId] = useState<string>('');
-  const [isDashboardOpen, setIsDashboardOpen] = useState(false);
-  const [lastProactiveCheck, setLastProactiveCheck] = useState<Date>(new Date());
+  const [userId, setUserId] = useState('');
+  const [sessionId, setSessionId] = useState('');
+  const [isDashboardOpen, setIsDashboardOpen] = useState(
+    () => new URLSearchParams(window.location.search).has('control'),
+  );
 
   useEffect(() => {
-    // Initialize user_id and session_id from local storage or generate new ones
     let storedUserId = localStorage.getItem('user_id');
     if (!storedUserId) {
       storedUserId = uuidv4();
       localStorage.setItem('user_id', storedUserId);
     }
     setUserId(storedUserId);
-
-    const newSessionId = uuidv4();
-    setSessionId(newSessionId);
-
-    setMessages([
-      {
-        id: uuidv4(),
-        sender: 'ai',
-        text: 'Hello! How can I assist you today?',
-        timestamp: new Date().toISOString(),
-      },
-    ]);
+    setSessionId(uuidv4());
+    setMessages([{
+      id: uuidv4(),
+      sender: 'ai',
+      text: 'I’m here. What should we think through?',
+      timestamp: new Date().toISOString(),
+    }]);
   }, []);
 
-  // Proactive message polling
   useEffect(() => {
     if (!userId) return;
-
-    const pollProactiveMessages = async () => {
+    const poll = async () => {
       try {
-        const proactiveResponse = await getProactiveMessage();
-        if (proactiveResponse.has_message && proactiveResponse.message) {
-          // Add proactive message to chat
-          const proactiveMessage: Message = {
+        const response = await getProactiveMessage();
+        if (response.has_message && response.message) {
+          setMessages((current) => [...current, {
             id: uuidv4(),
             sender: 'ai',
-            text: proactiveResponse.message,
+            text: response.message!,
             timestamp: new Date().toISOString(),
             is_proactive: true,
-            proactive_id: proactiveResponse.message_id,
-            trigger_type: proactiveResponse.trigger_type,
-          };
-
-          setMessages((prevMessages) => [...prevMessages, proactiveMessage]);
-          setLastProactiveCheck(new Date());
+            proactive_id: response.message_id,
+            trigger_type: response.trigger_type,
+          }]);
         }
       } catch (error) {
-        // Silently fail - proactive messages are optional
-        console.debug('Proactive message check failed:', error);
+        console.debug('Proactive message check unavailable:', error);
       }
     };
-
-    // Poll immediately and then every 30 seconds
-    pollProactiveMessages();
-    const interval = setInterval(pollProactiveMessages, 30000);
-
-    return () => clearInterval(interval);
+    poll();
+    const interval = window.setInterval(poll, 30000);
+    return () => window.clearInterval(interval);
   }, [userId]);
+
+  useEffect(() => {
+    const openControlRoom = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
+        event.preventDefault();
+        setIsDashboardOpen(true);
+      }
+    };
+    document.addEventListener('keydown', openControlRoom);
+    return () => document.removeEventListener('keydown', openControlRoom);
+  }, []);
 
   const handleSendMessage = async (text: string, imageBase64?: string, audioBase64?: string) => {
     if (!text.trim() && !imageBase64 && !audioBase64) return;
-
-    const newMessage: Message = {
+    const userMessage: Message = {
       id: uuidv4(),
       sender: 'user',
       text: text.trim(),
@@ -83,12 +79,10 @@ const App: React.FC = () => {
       image_base64: imageBase64,
       audio_base64: audioBase64,
     };
-
-    setMessages((prevMessages) => [...prevMessages, newMessage]);
+    setMessages((current) => [...current, userMessage]);
     setIsLoading(true);
-
     try {
-      const requestBody: ChatRequest = {
+      const request: ChatRequest = {
         user_id: userId,
         input_text: text.trim(),
         session_id: sessionId,
@@ -96,65 +90,47 @@ const App: React.FC = () => {
         image_base64: imageBase64,
         audio_base64: audioBase64,
       };
-      
-      const response = await sendMessage(requestBody);
-
-      // Record reaction to any recent proactive message
-      const recentMessages = [...messages, newMessage];
-      const lastProactiveMessage = recentMessages
-        .filter(m => m.sender === 'ai' && m.is_proactive)
-        .pop();
-      
-      if (lastProactiveMessage?.proactive_id) {
-        try {
-          await recordProactiveReaction(lastProactiveMessage.proactive_id, text.trim());
-        } catch (error) {
-          console.debug('Failed to record proactive reaction:', error);
-        }
+      const response = await sendMessage(request);
+      const proactive = [...messages, userMessage].filter((message) => message.is_proactive).pop();
+      if (proactive?.proactive_id) {
+        recordProactiveReaction(proactive.proactive_id, text.trim()).catch(() => undefined);
       }
-
-      setMessages((prevMessages) => [
-        ...prevMessages,
-        {
-          id: uuidv4(),
-          sender: 'ai',
-          text: response.response,
-          timestamp: new Date().toISOString(),
-        },
-      ]);
-    } catch (error: any) {
-      console.error('Failed to send message:', error);
-      setMessages((prevMessages) => [
-        ...prevMessages,
-        {
-          id: uuidv4(),
-          sender: 'ai',
-          text: `Error: ${error.message || 'Could not get a response from the AI.'}`,
-          timestamp: new Date().toISOString(),
-          is_error: true,
-        },
-      ]);
+      setMessages((current) => [...current, {
+        id: uuidv4(),
+        sender: 'ai',
+        text: response.response,
+        timestamp: new Date().toISOString(),
+      }]);
+    } catch (error) {
+      setMessages((current) => [...current, {
+        id: uuidv4(),
+        sender: 'ai',
+        text: error instanceof Error ? error.message : 'The cognitive cycle could not complete.',
+        timestamp: new Date().toISOString(),
+        is_error: true,
+      }]);
     } finally {
       setIsLoading(false);
     }
   };
 
   return (
-    <div className="flex flex-col h-screen bg-gray-100 dark:bg-gray-900 text-gray-900 dark:text-gray-100">
-      <header className="bg-blue-600 text-white p-4 shadow-md">
-        <div className="flex items-center justify-between">
-          <h1 className="text-xl font-bold">Multi-Agent AI Chat</h1>
-          <button
-            onClick={() => setIsDashboardOpen(true)}
-            className="px-4 py-2 bg-blue-700 hover:bg-blue-800 rounded-lg transition-colors font-medium"
-          >
-            📊 Dashboard
-          </button>
+    <div className="eca-app-shell">
+      <header className="eca-topbar">
+        <div className="eca-brand"><span><FiActivity /></span><div><b>BOB</b><small>Emergent cognitive architecture</small></div></div>
+        <div className="eca-top-actions">
+          <span className="privacy-indicator"><FiLock /> Local cognition</span>
+          <span className="system-indicator"><i /><FiRadio /> Online</span>
+          <button onClick={() => setIsDashboardOpen(true)} className="open-operator"><FiCommand /><span>Open control room</span><kbd>Ctrl K</kbd></button>
         </div>
       </header>
-      <main className="flex-1 flex flex-col overflow-hidden">
-        <ChatWindow messages={messages} isLoading={isLoading} />
-        <ChatInput onSendMessage={handleSendMessage} isLoading={isLoading} />
+      <main className="conversation-stage">
+        <section className="conversation-frame">
+          <div className="conversation-header"><div><span className="ops-overline">continuous cognition</span><h1>Conversation</h1></div><span className="session-code">SESSION / {sessionId.slice(0, 8).toUpperCase()}</span></div>
+          <ChatWindow messages={messages} isLoading={isLoading} />
+          <ChatInput onSendMessage={handleSendMessage} isLoading={isLoading} />
+        </section>
+        <footer className="conversation-footer"><FiLock /><span>Routine cognition stays local. External research crosses a question-only, audited boundary.</span></footer>
       </main>
       <Dashboard isOpen={isDashboardOpen} onClose={() => setIsDashboardOpen(false)} />
     </div>

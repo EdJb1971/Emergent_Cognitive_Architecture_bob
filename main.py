@@ -43,11 +43,12 @@ from src.services.gemini_grounded_research_provider import GeminiGroundedResearc
 from src.services.waking_inquiry_service import WakingInquiryService
 from src.services.research_calibration_ledger import ResearchCalibrationLedger
 from src.services.inquiry_review_service import InquiryReviewService
+from src.services.research_runtime_control import ResearchRuntimeControl
 from src.api.research_review import router as research_review_router
 from src.services.audio_input_processor import AudioInputProcessor
 from src.providers import ModelExecutionScheduler, OllamaProbe
 from src.providers.factory import build_active_provider, build_synthesis_provider, enforce_local_only
-from src.dependencies import APIKeyAuth, get_api_key_user_id # Import the authentication dependency
+from src.dependencies import APIKeyAuth, SYSTEM_USER_ID, get_api_key_user_id # Import the authentication dependency
 from typing import Dict, Any, List, Optional
 from uuid import UUID
 from datetime import datetime, timedelta
@@ -360,6 +361,17 @@ async def lifespan(app: FastAPI):
             waking_service=app.state.waking_inquiry_service,
             ledger=app.state.research_calibration_ledger,
         )
+        app.state.research_runtime_control = ResearchRuntimeControl(
+            research_service=app.state.research_service,
+            drive=app.state.cognitive_research_drive,
+            waking_service=app.state.waking_inquiry_service,
+            ledger=app.state.research_calibration_ledger,
+            api_key=settings.GEMINI_API_KEY,
+            model_name=settings.RESEARCH_MODEL,
+            timeout_seconds=settings.RESEARCH_TIMEOUT_SECONDS,
+            local_only=settings.LOCAL_ONLY_MODE,
+        )
+        await app.state.research_runtime_control.restore(SYSTEM_USER_ID)
         logger.info(
             "ResearchService initialized (enabled=%s, provider=%s, local_only=%s).",
             settings.RESEARCH_ENABLED,

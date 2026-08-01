@@ -145,6 +145,14 @@ class ResearchCalibrationLedger:
             for event in events
         )
 
+    async def latest_event(
+        self,
+        user_id: UUID,
+        event_type: ResearchLedgerEventType,
+    ) -> Optional[ResearchLedgerEvent]:
+        self._require_connected()
+        return await asyncio.to_thread(self._latest_event_sync, user_id, event_type)
+
     async def validate_source_reference(
         self,
         *,
@@ -573,6 +581,21 @@ class ResearchCalibrationLedger:
                 return False
             expected_previous = row[12]
         return True
+
+    def _latest_event_sync(
+        self,
+        user_id: UUID,
+        event_type: ResearchLedgerEventType,
+    ) -> Optional[ResearchLedgerEvent]:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT sequence, event_id, event_type, user_id, inquiry_id, cycle_id, "
+                "assessment_id, decision_id, request_id, created_at, payload, previous_hash, event_hash "
+                "FROM research_calibration_ledger WHERE user_id = ? AND event_type = ? "
+                "ORDER BY sequence DESC LIMIT 1",
+                (str(user_id), event_type.value),
+            ).fetchone()
+        return self._row_to_event(row) if row else None
 
     @staticmethod
     def _row_to_event(row: tuple[Any, ...]) -> ResearchLedgerEvent:

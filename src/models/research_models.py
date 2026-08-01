@@ -83,6 +83,7 @@ class ResearchLedgerEventType(str, Enum):
     RESEARCH_PACKET = "research_packet"
     SOURCE_FEEDBACK = "source_feedback"
     CALIBRATION_LABEL = "calibration_label"
+    RUNTIME_CONTROL_CHANGED = "runtime_control_changed"
 
 
 class SourceQualityVerdict(str, Enum):
@@ -295,3 +296,28 @@ class ResearchLedgerResponse(BaseModel):
     events: List[ResearchLedgerEvent] = Field(default_factory=list)
     count: int = Field(ge=0)
     next_after_sequence: Optional[int] = None
+
+
+class ResearchRuntimeState(BaseModel):
+    provider_enabled: bool = False
+    controller_active: bool = False
+    automatic_non_explicit_enabled: bool = False
+    emergency_stop: bool = False
+    provider_configured: bool = False
+    provider_available: bool = False
+    provider: str = "disabled"
+    model: Optional[str] = None
+    local_only: bool = False
+    explicit_approval_required: bool = True
+    automation_confirmation: str = "ENABLE AUTOMATIC RESEARCH"
+    persistence: str = "ledger_restored"
+    changed_at: datetime = Field(default_factory=utc_now)
+
+
+class ResearchRuntimeUpdateRequest(BaseModel):
+    provider_enabled: Optional[bool] = None
+    controller_active: Optional[bool] = None
+    automatic_non_explicit_enabled: Optional[bool] = None
+    emergency_stop: bool = False
+    reason: str = Field(min_length=1, max_length=1000)
+    confirmation: Optional[str] = Field(default=None, max_length=100)

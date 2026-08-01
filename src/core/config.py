@@ -52,7 +52,9 @@ class Settings(BaseSettings):
     # External research is a separate, disabled-by-default capability.
     RESEARCH_ENABLED: bool = Field(False, env="RESEARCH_ENABLED")
     RESEARCH_PROVIDER: str = Field("disabled", env="RESEARCH_PROVIDER")
-    RESEARCH_MODEL: str = Field("", env="RESEARCH_MODEL")
+    # A model is preselected so a configured Gemini key can be enabled from the
+    # operator UI; provider access itself remains disabled until explicitly toggled.
+    RESEARCH_MODEL: str = Field("models/gemini-3.5-flash-lite", env="RESEARCH_MODEL")
     RESEARCH_LOW_CONFIDENCE_THRESHOLD: float = Field(0.55, env="RESEARCH_LOW_CONFIDENCE_THRESHOLD")
     RESEARCH_MAX_QUERIES: int = Field(3, env="RESEARCH_MAX_QUERIES")
     RESEARCH_MAX_QUERY_CHARS: int = Field(500, env="RESEARCH_MAX_QUERY_CHARS")

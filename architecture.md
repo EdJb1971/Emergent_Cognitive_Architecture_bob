@@ -1,11 +1,11 @@
 
 # Emergent Cognitive Architecture (ECA) - Complete Architecture Documentation
 
-**Last Updated:** August 1, 2026
+**Last Updated:** August 2, 2026
 
 This document describes the Emergent Cognitive Architecture (ECA), a brain-inspired multi-agent system designed for sophisticated, human-like interaction, continuous learning, and cognitive continuity. The code is the authoritative record of runtime behavior; the status below separates implemented behavior from partial or planned work.
 
-## Implementation Status (Code Audit: August 1, 2026)
+## Implementation Status (Code Audit: August 2, 2026)
 
 **North star.** A locally-run cognitive architecture with persistent memory and continuous learning, where ordinary conversation, memory, and reasoning never leave the machine, and cloud inference is reserved for an explicit, auditable research escalation path. No provider is structurally privileged: generation, embeddings, moderation, and research are separately selectable capabilities behind a common contract.
 
@@ -21,17 +21,17 @@ This document describes the Emergent Cognitive Architecture (ECA), a brain-inspi
 | Multimodal input | Partial | Audio transcription is wired into the cycle. `VisualInputProcessor` exists but is not wired into application startup or the cognitive cycle. |
 | Provider selection | Implemented, configuration-driven | `build_active_provider()` in `src/providers/factory.py` resolves generation, embedding, moderation, and synthesis independently. Mixed selections are composed by `CompositeProvider`; a uniform selection returns the single adapter. Unknown values fail startup. |
 | End-to-end cycle | Verified running | First real `/chat` cycles completed on August 1, 2026. Fully local: 103s. Local agents with Gemini synthesis: 44.8s first turn, 66.8s with memory context. Memory recall across turns confirmed (name and detail correctly retrieved from a prior cycle). |
-| Cycle latency attribution | Measured | `StageTimer` records every orchestrator stage and emits one `CYCLE_TIMING` line per cycle; `OLLAMA_CALL` and `OLLAMA_EMBED` lines carry per-request server, queue, prompt-eval, and eval time. Measured August 1, 2026 on three cycles: latency is local token generation, not orchestration. Attribution below. |
+| Cycle latency attribution | Measured; first reduction slice implemented | `StageTimer` records every orchestrator stage and emits one `CYCLE_TIMING` line per cycle; `OLLAMA_CALL` and `OLLAMA_EMBED` lines carry per-request server, queue, prompt-eval, and eval time. The August 1 measurements attribute latency to local token generation. On August 2, meta-cognitive output was bounded and summary generation moved off the request path; comparable post-change cycle timings have not yet been recorded. |
 | Local-only operation | Verified | A complete cycle runs with `LLM_PROVIDER`, `EMBEDDING_PROVIDER`, and `MODERATION_PROVIDER` all set to `ollama`, making no cloud call. `LOCAL_ONLY_MODE=true` fails startup if any role resolves to a remote provider. |
 | Token counting | Local | `TokenCounter` uses a local estimator. It previously called the Gemini API per count, which put a network round-trip and a retry/backoff storm in the hot path of every memory operation. |
 | Provider neutrality | Implemented at the seam, Gemini-configured | `GEMINI_API_KEY` is optional and is only required when a Gemini-backed provider is actually selected. No agent imports a provider SDK or hardcodes a model name. The shipped default configuration selects Gemini for all three roles because that is the only cloud key currently held. |
 | Ollama text generation | Implemented, not the default | `OllamaProvider` is selectable via `LLM_PROVIDER=ollama` and admitted through `ModelExecutionScheduler`. `gemma4:e4b` completed a local GPU text smoke test on August 1, 2026. Its Ollama embedding endpoint returns `501 Not Implemented`, so it is a generation-only model. |
 | Local embeddings | Verified running | `embeddinggemma:latest` returns local `768`-dimension vectors through `OllamaEmbeddingProvider` and is the configured embedding role. Measured cost is ~250ms per single-text embed. |
 | Embedding identity guard | Implemented | Collections are stamped with `embedding_provider`, `embedding_model`, and `embedding_dimension`. `apply_embedding_identity()` compares provider and model, never dimension, and refuses to open a collection written by a different embedding model. Untagged non-empty collections are treated as legacy `gemini/models/embedding-001`. |
-| Vector migration | Implemented, not yet run | `python -m src.tools.reembed` rebuilds a collection into a new identity-stamped collection. It never modifies the source, resumes by skipping ids already written, supports `--dry-run` and `--limit`, and refuses to migrate into the vector space a collection already holds. |
-| Retrieval evaluation | Harness implemented, no measurement yet | `python -m src.tools.eval_retrieval` reports recall@k, MRR, and NDCG@k, querying each collection with the provider that produced its vectors. No fixture set has been authored and no baseline has been recorded, so no retrieval claim is currently supported by evidence. |
+| Vector migration | Implemented; no primary collection currently needs migration | `python -m src.tools.reembed` rebuilds a collection into a new identity-stamped collection without modifying its source and can resume by skipping existing ids. On August 2, dry-runs correctly refused both primary collections because they already hold the active `ollama/embeddinggemma:latest@768d` vector identity. There is no retained Gemini primary collection to compare or migrate. |
+| Retrieval evaluation | Initial local smoke baseline measured | `python -m src.tools.eval_retrieval` reports aggregate metrics and any below-perfect queries with the provider that produced each collection. A hand-reviewed 12-query fixture over all 12 current cycle records measured recall@5 `0.958`, MRR `0.958`, and NDCG@5 `0.952` on August 2. The two weak queries were `sister_name` (recall `0.750`, MRR `1.000`) and `brother_name` (recall `0.750`, MRR `0.500`). This small, repetitive corpus is a smoke baseline, not the planned 50-query quality evaluation or a Gemini comparison. |
 | Salience network | Planned | There is a feature flag only; no `SalienceNetwork` implementation is present. |
-| Validation | Repaired baseline | The repository virtual environment runs `96 passed, 3 skipped` on August 1, 2026. This is a regression baseline, not evidence that learning, retrieval, or routing quality has been measured. |
+| Validation | Repaired baseline | The repository virtual environment runs `100 passed, 3 skipped` on August 2, 2026. This is a regression baseline, not evidence that learning or routing quality has been measured. The three skipped root-level async tests are not collected by an async test plugin. |
 
 The phase sections below retain the design intent. Treat statements about autonomous background execution, measured performance improvements, or real-time streaming as planned unless this status section explicitly marks them implemented.
 
@@ -54,7 +54,16 @@ What the numbers establish:
 - **The cost is local token generation.** `gemma4:e4b` evaluates at roughly 26 tokens/second on this machine. Every second of cycle time is a token being generated. Prompt evaluation is 0.4-0.8s and model load is a constant ~0.8s per call.
 - **Queueing is negligible at current concurrency.** `ModelExecutionScheduler` runs with `max_interactive=1`, so agent calls dispatched through `asyncio.gather` are serialised. Measured queue time was 11-245ms only because few calls overlapped; with all seven agents active the serialisation is what produces the 54s and 57s stage figures in Cycle A.
 - **A single unbounded call can dominate a cycle.** The meta-cognitive assessment generated 483-605 completion tokens and cost 20-25s on its own, which is 30-39% of those cycles.
-- **`memory_upsert` is on the critical path and is not just I/O.** Its 16-22s contains a summarisation LLM call (~12s, 277 completion tokens) plus roughly 1.5s of embedding calls, with the remainder in ChromaDB writes. The user waits for all of it.
+- **At measurement time, `memory_upsert` was on the critical path and was not just I/O.** Its 16-22s contained a summarisation LLM call (~12s, 277 completion tokens) plus roughly 1.5s of embedding calls, with the remainder in ChromaDB writes. The August 2 slice subsequently deferred the summarisation work.
+
+### First latency reduction slice (August 2, 2026)
+
+The two changes directly indicated by the August 1 measurements are implemented:
+
+- Meta-cognitive uncertainty generation is bounded by `META_COGNITIVE_MAX_OUTPUT_TOKENS` (default `64`) and a second hard `META_COGNITIVE_MAX_RESPONSE_WORDS` limit (default `40`).
+- Per-turn summary generation and STM-flush summarisation are enqueued through `BackgroundTaskQueue` when it is wired. A per-user lock serialises summary writes; isolated/test construction retains a synchronous fallback.
+
+The change was exercised in a live run and is covered by regression tests, but no comparable post-change `CYCLE_TIMING` sample has been preserved. It is therefore correct to say the critical-path work was removed, but not yet to claim a measured end-to-end latency improvement. Background work is in-process and is cancelled during application shutdown; it is not a durable job queue.
 
 ## Table of Contents
 
@@ -1159,10 +1168,10 @@ The ECA implements a local, three-tier memory design inspired by human memory hi
 | --- | --- | --- |
 | Immediate transcript | In-process, per-user rolling verbatim buffer of user and assistant turns; bounded by `IMMEDIATE_TOKEN_BUDGET` (default 50,000 estimated tokens). | Not persistent, not shared across processes, and cleared on restart. |
 | Short-term memory | In-process, per-user `ShortTermMemory` cache of full `CognitiveCycle` objects, newest first; default budget is 25,000 estimated tokens. | Per-field embeddings are attempted but optional. Without them, STM semantic recall returns fewer or no matches. |
-| Conversation summary | One active summary per user, updated during each `upsert_cycle`; stores topics, entities, context points, preferences, and identity hints. | Summary generation and embedding failures are logged and do not stop the conversation. A summary may therefore be stale or unembedded. |
+| Conversation summary | One active summary per user stores topics, entities, context points, preferences, and identity hints. Each `upsert_cycle` enqueues its update when `BackgroundTaskQueue` is wired, with a per-user lock to prevent overlapping writes; otherwise it falls back to an inline update. | The queue is in-process rather than durable. Summary generation or embedding failure does not stop the conversation, and shutdown can cancel unfinished work, so a summary may be stale or unembedded. |
 | Long-term memory | ChromaDB persists full cycle JSON plus supplied vector embeddings, compact documents, and metadata. Patterns are stored separately. | Chroma retrieval order is normalized in application code; it is not a database ordering guarantee. |
-| Memory query | Query embedding, then STM cosine search, then Chroma vector search; results are merged and ranked by score. Default threshold is 0.5. | Relevance thresholds and distance conversion are heuristics and have not been evaluated against a labelled retrieval set. |
-| STM flush | On token pressure, the service summarizes selected cycles, upserts them to LTM, then removes them from STM. | Signal emission is conditional on `DecisionEngine` wiring. Failure of the flush raises an API error; automatic retry/recovery is incomplete. |
+| Memory query | Query embedding, then STM cosine search, then Chroma vector search; results are merged and ranked by score. Default threshold is 0.5. | Direct Chroma ranking has a 12-query smoke baseline. The application-level relevance threshold, distance conversion, STM/LTM merge, and summary contribution have not been evaluated against the planned diverse labelled set. |
+| STM flush | On token pressure, the service queues summarisation of selected cycles when the background queue is wired; the worker ensures LTM upserts before removing them from STM. Without a queue it uses the synchronous path. | Signal emission is conditional on `DecisionEngine` wiring. The queue has no persistence or automatic retry/recovery, and unfinished work is cancelled on application shutdown. |
 | Episodic/semantic consolidation | `MemoryConsolidationService` can create jobs for episodic-to-semantic conversion, replay, and pattern extraction. | No periodic job loop is started by application startup. The currently implemented service has incompatible `MemoryService` calls that must be repaired before it can be relied upon. |
 
 ### Operational Memory Flow
@@ -1172,9 +1181,9 @@ Cycle completed
   -> attempt per-field embeddings (non-fatal)
   -> append user/assistant turns to immediate transcript
   -> add full cycle to token-bounded STM
-  -> update conversation summary (non-fatal)
+  -> enqueue conversation-summary update when the background queue is wired (non-fatal)
   -> upsert full cycle to ChromaDB LTM
-  -> on STM pressure: summarize selected cycles, ensure LTM upsert, then remove from STM
+  -> on STM pressure: enqueue summarisation, ensure LTM upsert, then remove from STM
 ```
 
 The immediate transcript is supplied to `CognitiveBrain` as literal recent context. Summary and semantically retrieved cycles supply longer-running context. These are complementary paths, not a guarantee that every prior turn is placed in every prompt.
@@ -1334,7 +1343,7 @@ priority = 0.5  # baseline
 
 **Scoring note:** STM uses cosine similarity against optional per-field embeddings. LTM converts Chroma distances to a heuristic $[0, 1]$ score. The default relevance threshold is 0.5; neither scoring calibration nor any summary-based boost has been validated.
 
-**Known limitations:** STM and the immediate transcript are per-process; LTM is the cross-session record. Chroma cycles are sorted in memory after retrieval for transcript views. Embedding model versions must not be mixed in a collection during the planned local-embedding migration.
+**Known limitations:** STM and the immediate transcript are per-process; LTM is the cross-session record. Chroma cycles are sorted in memory after retrieval for transcript views. Embedding model versions must never be mixed in one collection; the identity guard enforces this for the primary collections.
 
 ### Proactive Engagement Engine
 
@@ -2474,11 +2483,19 @@ API_KEY=your_frontend_to_backend_api_key
 LLM_PROVIDER=gemini
 EMBEDDING_PROVIDER=gemini
 MODERATION_PROVIDER=gemini
+SYNTHESIS_PROVIDER=
+LOCAL_ONLY_MODE=false
 OLLAMA_BASE_URL=http://127.0.0.1:11434
 OLLAMA_CHAT_MODEL=gemma4:e4b
 OLLAMA_EMBEDDING_MODEL=embeddinggemma:latest
 OLLAMA_MAX_INTERACTIVE_REQUESTS=1
 OLLAMA_MAX_BACKGROUND_REQUESTS=1
+OLLAMA_NUM_CTX=16384
+OLLAMA_THINKING=false
+
+# Bounds the meta-cognitive routing response.
+META_COGNITIVE_MAX_OUTPUT_TOKENS=64
+META_COGNITIVE_MAX_RESPONSE_WORDS=40
 
 # Fails startup rather than mixing vector spaces. Disable only for recovery.
 EMBEDDING_IDENTITY_ENFORCED=true
@@ -2906,5 +2923,5 @@ ActionRecommendation = {
 ------
 
 **Document Maintainers:** Ed Bentley
-**Last Review:** November 7, 2025
+**Last Review:** August 2, 2026
 **Next Review:** As system evolves with new phases or major features

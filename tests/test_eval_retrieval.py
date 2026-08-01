@@ -103,7 +103,40 @@ async def test_evaluation_aggregates_metrics_and_records_misses(monkeypatch):
     assert result.recall == pytest.approx(0.5)
     assert result.mrr == pytest.approx(0.5)
     assert result.misses == ["q2"]
+    assert [query.query_id for query in result.weak_queries] == ["q2"]
+    assert result.weak_queries[0].retrieved == ["x", "y", "z"]
+    assert result.weak_queries[0].relevant == ["missing"]
     assert result.identity == "ollama/embeddinggemma:latest@768d"
+
+
+@pytest.mark.asyncio
+async def test_evaluation_records_partial_recall_as_a_weak_query(monkeypatch):
+    collection = MagicMock()
+    collection.metadata = OLLAMA.as_collection_metadata()
+    collection.query.return_value = {"ids": [["a", "x", "y"]]}
+    client = MagicMock()
+    client.get_collection.return_value = collection
+
+    provider = MagicMock()
+    provider.embed = AsyncMock(return_value=[0.1] * 768)
+    monkeypatch.setattr(
+        "src.tools.eval_retrieval.build_embedding_provider_for_identity",
+        lambda identity, scheduler: provider,
+    )
+
+    result = await evaluate_collection(
+        client,
+        "cognitive_cycles",
+        [{"id": "partial", "query": "query", "relevant_ids": ["a", "b"]}],
+        scheduler=MagicMock(),
+        k=3,
+    )
+
+    assert result.misses == []
+    assert len(result.weak_queries) == 1
+    assert result.weak_queries[0].query_id == "partial"
+    assert result.weak_queries[0].recall == pytest.approx(0.5)
+    assert result.weak_queries[0].mrr == pytest.approx(1.0)
 
 
 @pytest.mark.asyncio

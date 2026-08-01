@@ -66,6 +66,22 @@ def ndcg_at_k(retrieved: Sequence[str], relevant: Sequence[str], k: int) -> floa
 
 
 @dataclass
+class QueryDiagnostic:
+    query_id: str
+    recall: float
+    mrr: float
+    ndcg: float
+    retrieved: List[str]
+    relevant: List[str]
+
+    def summary(self) -> str:
+        return (
+            f"{self.query_id}: recall={self.recall:.3f} "
+            f"MRR={self.mrr:.3f} NDCG={self.ndcg:.3f}"
+        )
+
+
+@dataclass
 class EvaluationResult:
     collection: str
     identity: str
@@ -75,6 +91,7 @@ class EvaluationResult:
     mrr: float
     ndcg: float
     misses: List[str]
+    weak_queries: List[QueryDiagnostic]
 
     def summary(self) -> str:
         return (
@@ -120,6 +137,7 @@ async def evaluate_collection(
     reciprocal_ranks: List[float] = []
     gains: List[float] = []
     misses: List[str] = []
+    weak_queries: List[QueryDiagnostic] = []
 
     for entry in queries:
         embedding = await provider.embed(entry["query"])
@@ -127,12 +145,25 @@ async def evaluate_collection(
         retrieved = (response.get("ids") or [[]])[0]
         relevant = entry["relevant_ids"]
 
-        recalls.append(recall_at_k(retrieved, relevant, k))
+        recall = recall_at_k(retrieved, relevant, k)
+        recalls.append(recall)
         rank = reciprocal_rank(retrieved, relevant)
         reciprocal_ranks.append(rank)
-        gains.append(ndcg_at_k(retrieved, relevant, k))
+        gain = ndcg_at_k(retrieved, relevant, k)
+        gains.append(gain)
         if rank == 0.0:
             misses.append(entry.get("id") or entry["query"][:60])
+        if recall < 1.0 - 1e-9 or rank < 1.0 - 1e-9 or gain < 1.0 - 1e-9:
+            weak_queries.append(
+                QueryDiagnostic(
+                    query_id=entry.get("id") or entry["query"][:60],
+                    recall=recall,
+                    mrr=rank,
+                    ndcg=gain,
+                    retrieved=list(retrieved),
+                    relevant=list(relevant),
+                )
+            )
 
     count = len(queries)
     return EvaluationResult(
@@ -144,7 +175,16 @@ async def evaluate_collection(
         mrr=sum(reciprocal_ranks) / count,
         ndcg=sum(gains) / count,
         misses=misses,
+        weak_queries=weak_queries,
     )
+
+
+def print_diagnostics(result: EvaluationResult) -> None:
+    if not result.weak_queries:
+        return
+    print(f"Queries below perfect relevance ({len(result.weak_queries)}):")
+    for diagnostic in result.weak_queries:
+        print(f"  {diagnostic.summary()}")
 
 
 def build_template(client: Any, collection_name: str, sample: int, path: Path) -> int:
@@ -221,12 +261,14 @@ async def run(argv: Optional[Sequence[str]] = None) -> int:
 
     baseline = await evaluate_collection(client, args.collection, queries, scheduler, args.k)
     print(baseline.summary())
+    print_diagnostics(baseline)
 
     if not args.compare:
         return 0
 
     candidate = await evaluate_collection(client, args.compare, queries, scheduler, args.k)
     print(candidate.summary())
+    print_diagnostics(candidate)
     print(
         f"\ndelta recall@k={candidate.recall - baseline.recall:+.3f} "
         f"MRR={candidate.mrr - baseline.mrr:+.3f} "

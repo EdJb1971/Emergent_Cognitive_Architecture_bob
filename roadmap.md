@@ -49,23 +49,29 @@ All four recurring error classes are now at zero across a two-turn conversation.
 - `CompositeProvider.is_local` accounts for the safety provider, so cloud moderation cannot hide in an otherwise-local setup.
 - Embedding identity is enforced by provider and model, never dimension, because Gemini `embedding-001` and `embeddinggemma` are both 768-dimensional.
 - Tooling: `src.tools.list_models`, `src.tools.reembed`, `src.tools.eval_retrieval`.
+- A hand-reviewed 12-query retrieval fixture now covers all 12 current `cognitive_cycles` records. The first local smoke baseline is recall@5 `0.958`, MRR `0.958`, and NDCG@5 `0.952`. Ten queries were perfect; `sister_name` had recall `0.750` at rank 1 and `brother_name` had recall `0.750` with its first relevant result at rank 2. This is too small and repetitive to satisfy the Phase 7 quality corpus.
+- Both primary collections already carry `ollama/embeddinggemma:latest@768d`. Migration dry-runs correctly refuse them because rebuilding into the same vector identity would be meaningless; no legacy Gemini primary collection is present for a like-for-like comparison.
 
-**Test baseline:** `96 passed, 3 skipped`.
+**Test baseline:** `100 passed, 3 skipped` on August 2, 2026. The skips are three root-level async tests that are not handled by an async test plugin.
 
 **Latency is now measured, not guessed.** `StageTimer` wraps every orchestrator stage and emits a `CYCLE_TIMING` line plus `metadata["stage_timings_ms"]`; `OLLAMA_CALL` and `OLLAMA_EMBED` lines give per-request server, queue, prompt-eval, and eval time. Three cycles on August 1, 2026 overturned the previous assumption:
 
 - Orchestration costs **under 200ms per cycle**. Routing, both conflict checks, contextual encoding, theory-of-mind validation, and RL updates are collectively free. The "~40s of orchestration overhead" theory was wrong.
 - The cost is **local token generation at ~26 tokens/second**. Prompt evaluation is 0.4-0.8s and model load a constant ~0.8s per call; everything else is tokens coming out.
 - The earlier "warm agent call ~1.1s" figure was a trivial smoke-test prompt. Real agent calls generate 80-600 tokens and cost 4-25s each.
-- Three stages own the whole cycle: `stage1_agents`/`stage2_agents` (20-57s, serialised by `max_interactive=1`), `meta_cognitive` (20-25s for a *single* unbounded call producing 483-605 tokens), and `memory_upsert` (16-22s, containing a ~12s summarisation LLM call the user waits for).
+- In the August 1 baseline, three stages owned the whole cycle: `stage1_agents`/`stage2_agents` (20-57s, serialised by `max_interactive=1`), `meta_cognitive` (20-25s for a single unbounded call producing 483-605 tokens), and `memory_upsert` (16-22s, including a ~12s summarisation call). The August 2 slice bounded the first and deferred the second.
 - Gemini synthesis is 3.0-3.2s and consistently the cheapest stage in the cycle.
 - Per-agent `AGENT_METRIC` durations were previously always ~0ms because the timer started after `asyncio.gather` had already returned. Now measured correctly.
 
-**Next action:** Cut generated tokens and move work off the critical path, in that order:
+**First latency-reduction slice completed on August 2, 2026:**
 
-1. Cap `max_output_tokens` on the meta-cognitive assessment. It is a routing decision, not an essay, and currently costs a third of a cycle.
-2. Move `memory_upsert`'s summarisation off the response path into the background queue. The user should not wait ~12s for a summary they never see.
-3. Only then consider raising `max_interactive` — it trades latency for VRAM contention, and should be decided with the queue numbers the instrumentation now provides.
+1. Meta-cognitive uncertainty output is capped at 64 tokens and hard-truncated to 40 words by default.
+2. Per-turn summary generation and STM-flush summarisation are queued off the response path when `BackgroundTaskQueue` is wired, with a per-user lock around summary writes.
+3. The synchronous fallback remains for isolated/test construction. The production queue is in-process and non-durable; shutdown cancels unfinished jobs.
+
+The implementation was exercised in a live run, but a comparable post-change `CYCLE_TIMING` sample was not preserved. End-to-end improvement therefore remains to be measured before adjusting `max_interactive`.
+
+**Current evidence slice:** The local retrieval smoke fixture and baseline above are complete. Next, preserve post-latency timing evidence and grow the fixture to at least 50 diverse queries as new non-duplicate records become available. A Gemini comparison must not be manufactured by uploading the current private corpus while the cloud-context privacy boundary remains undecided.
 
 ## Direction
 
@@ -73,7 +79,7 @@ Run the normal cognitive cycle locally through Ollama, using a capable local mul
 
 This is a good fit for ECA. It makes the persistent memory and cognitive orchestration inexpensive to run, keeps routine conversations private, and makes every cloud call intentional and inspectable.
 
-The existing implementation does not fully support this split yet. The provider boundary exists and roles are independently selectable, but `LLMIntegrationService` is still the only implementation behind agents' structured-output expectations, and local generation cannot be enabled until JSON parsing is made resilient.
+The implementation supports the local routine path today: roles are independently selectable, Ollama JSON mode is requested for structured calls, and shared JSON extraction/repair is used by the agents and Cognitive Brain. The target split is still incomplete because cloud research escalation, its privacy policy, multimodal capability routing, and hybrid observability have not been implemented.
 
 ## Target Architecture
 
@@ -144,7 +150,7 @@ Cloud research is a capability, not the default model. The local final synthesiz
 
 **Exit criteria:** The app can run unchanged with a configured Gemini adapter, while no agent imports a Gemini SDK or hardcodes a Gemini model name.
 
-**Status:** Met. Items 1, 3, 4, 6, and 7 are implemented. Item 2 is implemented at startup wiring; item 5 (structured-output parse/repair boundary) is still outstanding and is a prerequisite for routing agents to a local model.
+**Status:** Met for the current text path. Provider interfaces, adapters, capabilities, request/result envelopes, startup injection, scheduling, Ollama JSON mode, and shared JSON extraction/repair are implemented. Parse/repair status is not yet propagated consistently through `ProviderResult`, so that observability detail remains follow-up work rather than a blocker to local agent routing.
 
 ## Phase 2: Add Ollama as the Local Default
 
@@ -155,12 +161,12 @@ Cloud research is a capability, not the default model. The local final synthesiz
    - `LLM_PROVIDER=ollama`
    - `OLLAMA_BASE_URL=http://localhost:11434`
    - `OLLAMA_CHAT_MODEL=<verified-local-model>`
-   - model-specific context and output limits remain outstanding
-3. Do not route routine calls yet: `gemma4:e4b` is verified for local text generation but does not implement Ollama embeddings, and agents still assume reliable JSON. Enable local generation only after the structured-output repair boundary (Phase 1 item 5) exists.
+   - `OLLAMA_NUM_CTX` is sent on every call and each request carries an output limit; workload-specific budget tuning remains ongoing
+3. Implemented and verified: routine agent calls can use `gemma4:e4b`; embeddings use the separately selected `embeddinggemma:latest` adapter. Ollama JSON mode plus shared repair handles structured agent output.
 4. Implemented: health checks for Ollama availability and installed model presence.
-5. Add a provider fallback policy: fail clearly for normal local requests; never silently send private context to a cloud provider.
-6. Add a `ModelExecutionScheduler` (or `InferenceBudgetManager`) before enabling local routine routing. It owns bounded concurrency, interactive-over-background priority, per-cycle call/token budgets, cancellation, compact-cycle degradation, model-residency state, and queue/VRAM telemetry.
-7. Benchmark the full cycle and tune agent activation, token budgets, concurrency, and context trimming for the available hardware.
+5. Implemented for normal requests: provider failures surface rather than silently falling back to cloud. A separate explicit research-escalation policy remains Phase 5 work.
+6. Partially implemented: `ModelExecutionScheduler` bounds interactive and background concurrency and exposes active counts. Per-cycle call/token budgets, cancellation, compact-cycle degradation, residency management, and richer queue/VRAM telemetry remain planned.
+7. In progress: full-cycle timing identifies the dominant stages and the first output/critical-path reduction slice is implemented. Comparable post-change timings and any concurrency change are still pending.
 
 **Exit criteria:** A text-only `/chat` cycle completes locally with no Gemini API calls; local inference remains bounded under concurrent work; and the selected provider/model plus scheduling decision are visible in cycle metadata and logs.
 
@@ -170,10 +176,10 @@ Cloud research is a capability, not the default model. The local final synthesiz
 
 1. Implemented: `OllamaEmbeddingProvider` is a dedicated local embedding adapter, selectable via `EMBEDDING_PROVIDER=ollama`.
 2. Implemented: embedding provider/model/dimension/identity-version are stored in ChromaDB collection metadata, and a provider+model comparison fails closed on mismatch. Dimension is not used as the compatibility test because Gemini `embedding-001` and `embeddinggemma` share 768 dimensions.
-3. Create a migration command that rebuilds embeddings into a new collection rather than mixing vector spaces in the current collection. **This is the active blocker.** It must re-embed `cognitive_cycles` and `conversation_summaries` into new identity-stamped collections, leave the originals intact, and be resumable.
-4. Compare retrieval quality against the existing Gemini embeddings with a small curated memory-query fixture set.
-5. Switch `MemoryService`, summaries, and retrieval to the local embedding provider only after quality and dimensional compatibility are verified.
-6. Add batched embedding to `OllamaEmbeddingProvider`. `/api/embed` accepts a list, and re-embedding a full collection one string at a time will be needlessly slow.
+3. Implemented: `src.tools.reembed` rebuilds into a new identity-stamped collection, leaves the source intact, skips ids already present when resuming, supports batching, and refuses a same-identity migration.
+4. Partially validated: a reviewed 12-query local smoke fixture records recall@5 `0.958`, MRR `0.958`, and NDCG@5 `0.952`. There is no retained Gemini collection to compare, and uploading the private local corpus to create one requires an explicit privacy decision.
+5. Implemented and runtime-verified: `MemoryService`, summaries, and retrieval use the selected local embedding provider. The initial collections were created directly in the local vector space rather than migrated from Gemini.
+6. Implemented: `OllamaEmbeddingProvider.embed_batch()` sends document lists to `/api/embed`; the migration tool uses it per batch.
 7. Extend identity stamping to the remaining embedding-backed collections (self-model, autobiographical, emotional profiles) once the migration path is proven on the two primary collections.
 
 **Exit criteria:** Memory ingestion and retrieval work with no cloud embedding call, and legacy vector collections remain recoverable.
@@ -228,11 +234,11 @@ Cloud research is a capability, not the default model. The local final synthesiz
 
 **Goal:** Make the existing STM, summary, LTM, and consolidation design reliable with local models and measurable retrieval quality.
 
-**Current status:** Implemented in parts, not yet validated end-to-end. STM, summary, ChromaDB storage, and the consolidation service exist. Periodic consolidation scheduling, cleanup policy, recovery verification, and evaluation evidence are incomplete.
+**Current status:** Implemented in parts, with an initial local retrieval smoke baseline but no end-to-end reliability validation. STM, background summary updates, ChromaDB storage, and the consolidation service exist. Periodic consolidation scheduling, cleanup policy, recovery verification, and a diverse evaluation corpus remain incomplete.
 
 1. Make all memory budgets model-neutral. Derive STM/context reserves from active provider capabilities instead of Gemini-specific limits.
-2. Create a versioned memory evaluation fixture: at least 50 queries, known relevant cycle IDs, time-sensitive cases, and expected summary facts.
-3. Measure local embedding retrieval with top-$k$ recall, MRR, and NDCG before switching any collection. Define an acceptable quality delta before migration.
+2. In progress: the versioned fixture contains 12 reviewed paraphrased queries over all 12 current cycle records. Grow it to at least 50 diverse queries with time-sensitive cases and expected summary facts; repeated smoke-test conversations are not sufficient evidence.
+3. Initial local measurement complete: recall@5 `0.958`, MRR `0.958`, and NDCG@5 `0.952`; the evaluator now identifies partial-recall/ranking queries instead of reporting only total misses. The collections were created directly with local embeddings, so there was no pre-switch Gemini collection. Define an acceptable delta and a privacy-safe comparison corpus before any cross-provider comparison.
 4. Preserve provenance: summaries and semantic memories must retain source cycle IDs, generation provider/model, timestamps, and embedding version.
 5. Add per-user locking and fault-injection tests for summary-before-flush, failed upserts, and interrupted recovery.
 6. Add a deliberate STM cleanup and snapshot policy: retention bounds, recovery age limits, periodic snapshots, and no silent data deletion.
@@ -331,12 +337,19 @@ Implemented today:
 LLM_PROVIDER=gemini
 EMBEDDING_PROVIDER=gemini
 MODERATION_PROVIDER=gemini
+SYNTHESIS_PROVIDER=
+LOCAL_ONLY_MODE=false
 
 OLLAMA_BASE_URL=http://localhost:11434
 OLLAMA_CHAT_MODEL=gemma4:e4b
 OLLAMA_EMBEDDING_MODEL=embeddinggemma:latest
 OLLAMA_MAX_INTERACTIVE_REQUESTS=1
 OLLAMA_MAX_BACKGROUND_REQUESTS=1
+OLLAMA_NUM_CTX=16384
+OLLAMA_THINKING=false
+
+META_COGNITIVE_MAX_OUTPUT_TOKENS=64
+META_COGNITIVE_MAX_RESPONSE_WORDS=40
 
 # Fails startup rather than mixing vector spaces.
 EMBEDDING_IDENTITY_ENFORCED=true
@@ -351,8 +364,7 @@ RESEARCH_PROVIDER=gemini
 RESEARCH_MODEL=<verified-cloud-model>
 RESEARCH_ALLOW_LOCAL_CONTEXT=false
 
-# Privacy and operating modes
-LOCAL_ONLY_MODE=false
+# Cloud context boundary
 MAX_CLOUD_CONTEXT_CHARS=12000
 ```
 
@@ -369,17 +381,17 @@ Still open:
 4. Whether cloud research is allowed automatically by policy or only after user confirmation.
 5. The privacy boundary for cloud escalation: no local context, compact summary only, or user-approved selected memories.
 6. The current Google model identifier, confirmed from the provider console/API rather than a marketing label.
-7. The acceptable retrieval quality delta for migrating from Gemini to local embeddings, defined before the comparison is run.
+7. The acceptable retrieval-quality delta and privacy-safe source corpus for any future Gemini-versus-local comparison. No legacy Gemini primary collection exists today.
 
 ## Current Execution Order
 
 1. Complete: Phase 0 test repair and runtime baseline.
-2. Complete: Phase 1 provider boundary and Phase 2 local adapter/scheduler, except the structured-output repair boundary.
-3. Complete: cycle latency instrumentation. Per-stage and per-request timing is emitted on every cycle, and the bottleneck is identified.
-4. **Active:** Latency reduction driven by those numbers — bound the meta-cognitive output budget, then move summarisation off the response path.
-5. Then Phase 3 migration verification plus the Phase 7 retrieval fixture set, then measure local against Gemini retrieval.
-6. Then the structured-output parse/repair boundary, which unblocks routing agents to the local model.
-7. Then Phase 5 and Phase 6: controlled cloud research escalation, local-only enforcement, and hybrid observability.
+2. Complete for the current text path: Phase 1 provider boundary, shared structured-output repair, and Phase 2 local adapter/routing.
+3. Complete: cycle latency instrumentation. Per-stage and per-request timing identifies local token generation as the bottleneck.
+4. Complete in code: cap meta-cognitive output and move summary/STM-flush summarisation off the response path. Post-change end-to-end timing evidence is still required.
+5. Complete as a smoke slice: verify both primary collections are already in the active local vector space, author a 12-query reviewed fixture, and record the first local retrieval baseline.
+6. **Active evidence work:** preserve comparable post-latency `CYCLE_TIMING` samples and expand retrieval evaluation toward the 50-query Phase 7 corpus. Do not create a cloud comparison from private memory until the privacy boundary is decided.
+7. Then Phase 5 and Phase 6: controlled cloud research escalation, explicit research enablement, and hybrid observability. `LOCAL_ONLY_MODE` enforcement itself is already implemented.
 8. Then Phase 8 through Phase 10: validate learning, attention, salience, and autonomous task mechanisms before adding predictive cognition.
 
-The next slice is latency reduction. It is now an evidence-driven change rather than a guess: the instrumentation names the three stages that own the cycle, so each fix can be verified against the same `CYCLE_TIMING` line that motivated it.
+The immediate next measurement is a matched live cycle after the latency changes. The next development slice after that is the cloud-research escalation boundary, unless memory reliability findings from the growing fixture expose a defect that should be fixed first.

@@ -1,0 +1,131 @@
+{
+  "version": 1,
+  "source_collection": "cognitive_cycles",
+  "notes": "Hand-reviewed against all 12 cognitive-cycle records present on 2026-08-02. Multiple relevant IDs are listed where repeated turns contain the same memory. This is an initial smoke baseline, not the planned 50-query quality corpus.",
+  "queries": [
+    {
+      "id": "sister_name",
+      "query": "What is my sister's name?",
+      "relevant_ids": [
+        "7ad1812f-239e-4449-a62a-8b20dc2ecb6e",
+        "ba561a23-3358-493b-b9b2-c74c5373f161",
+        "fcc77004-9734-4319-9dc6-3de3ee89228b",
+        "888a6efa-cc77-4a37-9c97-1e66dfb45051"
+      ],
+      "tags": ["identity", "family", "paraphrase"],
+      "reviewed": true
+    },
+    {
+      "id": "sister_dog_name",
+      "query": "What is the name of Kate's dog?",
+      "relevant_ids": [
+        "7ad1812f-239e-4449-a62a-8b20dc2ecb6e",
+        "ba561a23-3358-493b-b9b2-c74c5373f161",
+        "fcc77004-9734-4319-9dc6-3de3ee89228b",
+        "888a6efa-cc77-4a37-9c97-1e66dfb45051"
+      ],
+      "tags": ["entity", "family", "paraphrase"],
+      "reviewed": true
+    },
+    {
+      "id": "sister_pet_type",
+      "query": "What kind of pet did my sister recently get?",
+      "relevant_ids": [
+        "7ad1812f-239e-4449-a62a-8b20dc2ecb6e",
+        "ba561a23-3358-493b-b9b2-c74c5373f161",
+        "fcc77004-9734-4319-9dc6-3de3ee89228b",
+        "888a6efa-cc77-4a37-9c97-1e66dfb45051"
+      ],
+      "tags": ["fact", "family", "paraphrase"],
+      "reviewed": true
+    },
+    {
+      "id": "brother_name",
+      "query": "Can you remind me what my brother is called?",
+      "relevant_ids": [
+        "5fde446f-b720-47a0-a5d2-350d97c5b6b7",
+        "780f38f0-292f-4f2e-9e65-8e4eaf433a1b",
+        "0336c0bd-5278-4d42-a3f4-bb694fa0dcd7",
+        "cefae13b-6535-4e02-82b8-7d54e021027c"
+      ],
+      "tags": ["identity", "family", "paraphrase"],
+      "reviewed": true
+    },
+    {
+      "id": "brother_destination",
+      "query": "Which city is Tom moving to?",
+      "relevant_ids": [
+        "5fde446f-b720-47a0-a5d2-350d97c5b6b7",
+        "780f38f0-292f-4f2e-9e65-8e4eaf433a1b",
+        "0336c0bd-5278-4d42-a3f4-bb694fa0dcd7",
+        "cefae13b-6535-4e02-82b8-7d54e021027c"
+      ],
+      "tags": ["location", "family", "paraphrase"],
+      "reviewed": true
+    },
+    {
+      "id": "brother_move_emotion",
+      "query": "What change involving Tom made me feel unsettled?",
+      "relevant_ids": [
+        "780f38f0-292f-4f2e-9e65-8e4eaf433a1b",
+        "cefae13b-6535-4e02-82b8-7d54e021027c"
+      ],
+      "tags": ["emotion", "family", "event"],
+      "reviewed": true
+    },
+    {
+      "id": "dinner_plan",
+      "query": "What meal did I ask Bob to plan for four guests?",
+      "relevant_ids": [
+        "c8f60bb1-abcc-4bbf-86ab-0c0c67b9f0b5"
+      ],
+      "tags": ["task", "food", "paraphrase"],
+      "reviewed": true
+    },
+    {
+      "id": "three_course_request",
+      "query": "Find the conversation where we discussed a three-course menu.",
+      "relevant_ids": [
+        "c8f60bb1-abcc-4bbf-86ab-0c0c67b9f0b5"
+      ],
+      "tags": ["task", "food", "semantic"],
+      "reviewed": true
+    },
+    {
+      "id": "weekend_projects",
+      "query": "When did I ask for ideas for something to build over a weekend?",
+      "relevant_ids": [
+        "1c1b28f5-956c-4d5c-9e39-03ee01af6a9c"
+      ],
+      "tags": ["task", "projects", "paraphrase"],
+      "reviewed": true
+    },
+    {
+      "id": "career_options",
+      "query": "Find my request for help choosing between two career paths.",
+      "relevant_ids": [
+        "e068c9f9-6b8f-4191-bc07-3f15a31bfab6"
+      ],
+      "tags": ["task", "career", "paraphrase"],
+      "reviewed": true
+    },
+    {
+      "id": "france_capital",
+      "query": "Which conversation answered a question about France's capital?",
+      "relevant_ids": [
+        "8fe0e7a0-5cfd-476b-9334-bd36b645121b"
+      ],
+      "tags": ["fact", "geography", "paraphrase"],
+      "reviewed": true
+    },
+    {
+      "id": "paris_visit",
+      "query": "Recall why Paris was recommended as a place to visit.",
+      "relevant_ids": [
+        "8fe0e7a0-5cfd-476b-9334-bd36b645121b"
+      ],
+      "tags": ["fact", "travel", "semantic"],
+      "reviewed": true
+    }
+  ]
+}

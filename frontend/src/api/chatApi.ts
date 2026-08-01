@@ -1,16 +1,12 @@
 import axios from 'axios';
 import { ChatRequest, ChatResponse } from 'types/chat';
-
-const API_BASE_URL = process.env.REACT_APP_BACKEND_URL || 'http://localhost:8000';
-// SEC-001 Fix: Remove hardcoded default API key.
-// If REACT_APP_API_KEY is not set, API_KEY will be undefined, and sendMessage will throw an error.
-const API_KEY = process.env.REACT_APP_API_KEY; 
+import { API_BASE_URL, API_KEY } from './config';
 
 export const sendMessage = async (request: ChatRequest): Promise<ChatResponse> => {
   // SEC-001 Fix: Explicitly check for API_KEY before making the request.
   if (!API_KEY) {
-    console.error('Configuration Error: REACT_APP_API_KEY is not set.');
-    throw new Error('API key is missing. Please configure REACT_APP_API_KEY.');
+    console.error('Configuration Error: VITE_API_KEY is not set.');
+    throw new Error('API key is missing. Please configure VITE_API_KEY.');
   }
 
   try {

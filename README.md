@@ -100,7 +100,7 @@ repo/
 
 ### Prerequisites
 - Python 3.11+
-- Node.js 18+ (for the optional dashboard frontend)
+- Node.js 20.19+, 22.12+, or 24+ (for the optional Vite dashboard frontend)
 - ChromaDB (auto-initialized on first run)
 
 ### Backend Setup
@@ -117,9 +117,8 @@ source .venv/bin/activate  # On Windows: .\.venv\Scripts\activate
 # Install dependencies
 pip install -r requirements.txt
 
-# Copy environment template and add your keys
-npm install
-# Edit .env with your GEMINI_API_KEY, etc.
+# Copy .env.example to .env and add your keys
+# Edit .env with your GEMINI_API_KEY, API_KEY, etc.
 
 # Run the server
 uvicorn main:app --reload
@@ -129,11 +128,11 @@ uvicorn main:app --reload
 
 ```bash
 cd frontend
-npm install
-npm run devc
+npm ci
+npm run dev
 ```
 
-The frontend consumes the FastAPI backend for live cycle traces, drift telemetry, and learning metrics.
+Vite binds to `127.0.0.1:3000` and proxies `/api`, `/chat`, and `/ws` to the local FastAPI server. The proxy reads `API_KEY` from the repository `.env` and injects it server-side, so normal local development does not compile the key into browser JavaScript. Use `npm run build` for the type-checked production build and `npm run preview` for a localhost-only preview.
 
 ### Configuration & Feature Flags
 

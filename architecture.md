@@ -33,7 +33,7 @@ This document describes the Emergent Cognitive Architecture (ECA), a brain-inspi
 | Application memory scoring | Repaired and live-verified | The primary collections use Chroma's default squared-L2 distance, but `MemoryService` previously applied a discontinuous cosine-style conversion: a closer `0.865` result scored `0.135` while a worse `1.088` result scored `0.479`. Metric-aware conversion now maps normalized L2 vectors onto cosine-comparable scores. A matched live query changed from zero Cognitive Brain memories and a failed clarification to three LTM memories and correct recall of Tom and Leeds. |
 | Research escalation | Complete guarded round trip, review surface, and runtime control plane; disabled/shadowed by default | `CognitiveResearchDrive` combines bounded uncertainty, conflict, novelty/prediction error, volatility, stakes, persistence, expected information gain, privacy/cost inhibition, hysteresis, and cooldown. `InquiryCandidateStore` durably de-duplicates waking/reflection/dream inquiries and tracks waking review, approval, success, and retryable failure. The operator UI and authenticated APIs list, inspect, approve, dismiss, and retry inquiries. `WakingInquiryService` can resolve locally, defer, require user approval, or cross both the cognitive and policy gates. `GeminiGroundedResearchProvider` uses Google Search grounding and accepts only URL-annotated claims; `ResearchService` independently validates IDs, provider identity, question-only context, URLs, source references, and bounds. Cognitive Brain receives only verified packets and emits deterministic source links. A database-enforced append-only, hash-chained ledger captures reviews, policy decisions, packets, source feedback, calibration labels, and runtime changes. Provider access, active control, and automatic non-explicit research are separately interlocked UI toggles; the final transition requires typed confirmation, and emergency stop disables all three. State is restored from the ledger after restart. Defaults remain provider-disabled, controller-shadowed, and explicit-approval-required. |
 | Salience network | Planned | There is a feature flag only; no `SalienceNetwork` implementation is present. |
-| Validation | Repaired baseline | The repository virtual environment runs `157 passed, 3 skipped` on August 2, 2026. The React production build compiles successfully with Node `v24.18.1`/npm `11.16.0`; desktop and responsive operator layouts were rendered against the live local API. The research-drive fixture has 20 reviewed synthetic cases and measures action accuracy `1.000`, escalation precision `1.000`, and escalation recall `1.000`. A guarded live Gemini smoke test returned 2 verified claims from 2 URL sources after 2 searches in `5567.7ms`. This is a deterministic regression and connectivity baseline, not proof of real-world calibration or biological equivalence. The three skipped root-level async tests are not collected by an async test plugin. |
+| Validation | Repaired baseline | The repository virtual environment runs `157 passed, 3 skipped` on August 2, 2026. The React production build passes TypeScript checking and compiles with Vite `8.2.0`, Node `v24.18.1`, and npm `11.16.0`; `npm audit` reports zero vulnerabilities. Desktop and responsive operator layouts were rendered against the live local API before the toolchain migration, and the migrated Vite runtime/proxy completed an authenticated live API smoke; a fresh interactive browser session was unavailable for the post-migration pass. The research-drive fixture has 20 reviewed synthetic cases and measures action accuracy `1.000`, escalation precision `1.000`, and escalation recall `1.000`. A guarded live Gemini smoke test returned 2 verified claims from 2 URL sources after 2 searches in `5567.7ms`. This is a deterministic regression and connectivity baseline, not proof of real-world calibration or biological equivalence. The three skipped root-level async tests are not collected by an async test plugin. |
 
 The phase sections below retain the design intent. Treat statements about autonomous background execution, measured performance improvements, or real-time streaming as planned unless this status section explicitly marks them implemented.
 
@@ -2396,16 +2396,18 @@ useEffect(() => {
 
 ## Frontend Architecture
 
-The frontend is a responsive React 18 and TypeScript single-page application. Its primary surfaces are the conversational shell and a full-screen, authenticated operator console for research governance and cognitive telemetry.
+The frontend is a responsive React 18 and TypeScript single-page application built by Vite 8. Its primary surfaces are the conversational shell and a full-screen, authenticated operator console for research governance and cognitive telemetry. Development and preview servers bind to localhost only. Their same-origin proxy reads the backend `API_KEY` in the Node process and injects it upstream, keeping the key out of normal browser bundles.
 
 ### Project Structure
 
 ```
 /frontend/
-├── public/
-│   └── index.html           # Main HTML page
+├── index.html               # Vite HTML entry point
+├── vite.config.ts           # Localhost server, aliases, build, and authenticated proxy
+├── public/                  # Static manifest/icons copied by Vite
 ├── src/
 │   ├── api/
+│   │   ├── config.ts        # Same-origin/direct backend configuration
 │   │   ├── chatApi.ts       # Chat API communication layer (Axios + API key)
 │   │   ├── dashboardApi.ts  # Dashboard metrics API layer (WebSocket + REST)
 │   │   └── researchApi.ts   # Runtime, inquiry, ledger, and calibration API layer
@@ -2428,6 +2430,7 @@ The frontend is a responsive React 18 and TypeScript single-page application. It
 │   └── index.css            # Tailwind CSS styles
 ├── build/                   # Production build output
 ├── tailwind.config.js       # Tailwind CSS configuration
+├── postcss.config.js        # PostCSS/autoprefixer configuration
 └── package.json             # Node dependencies
 ```
 
@@ -2448,13 +2451,14 @@ The frontend is a responsive React 18 and TypeScript single-page application. It
 *   **`AgentActivity.tsx`:** Agent coordination heatmap showing emergence patterns and conflict resolution
 
 #### API Layer
-*   **`api/chatApi.ts`:** Chat communication module using Axios with secure API key handling
+*   **`api/config.ts`:** Defaults browser traffic to the same-origin Vite proxy; direct-backend mode is explicit and local-only
+*   **`api/chatApi.ts`:** Chat communication module using patched Axios with authenticated requests
 *   **`api/dashboardApi.ts`:** Dashboard metrics API with WebSocket connections and REST endpoints
 *   **`api/researchApi.ts`:** Authenticated typed client for runtime controls, inquiry review, source feedback, calibration labels/summaries, and ledger history
 
 ### Dashboard Integration
 
-The operator console opens from the chat header, `Ctrl/Cmd+K`, or the `?control` deep link. It supports REST-based governance and metric views; live metric broadcasting remains planned. Key features include:
+The operator console opens from the chat header, `Ctrl/Cmd+K`, or the `?control` deep link. It supports REST-based governance and metric views; live metric broadcasting remains planned. The retired Create React App dependency graph is no longer present: Vite, Axios, PostCSS, UUID, TypeScript, and Vitest are current and `npm audit` reports zero findings. Key features include:
 
 - **Initial WebSocket snapshot**; continuous server-side metric broadcasts are not implemented
 - **Configurable refresh intervals** (1s to 60s)
@@ -2526,12 +2530,12 @@ export const sendMessage = async (
     user_id: userId,
     session_id: sessionId,
     multimodal: { image: null, audio: null }
-  }, {
-    headers: { 'X-API-Key': process.env.REACT_APP_API_KEY }
   });
   return response.data;
 };
 ```
+
+In the normal localhost workflow, Vite's server-side proxy adds `X-API-Key`; the browser never receives the credential. `VITE_BACKEND_URL` plus `VITE_API_KEY` remains an explicit direct-backend escape hatch for a trusted local build and must not be used for a publicly distributed static bundle.
 
 ---
 

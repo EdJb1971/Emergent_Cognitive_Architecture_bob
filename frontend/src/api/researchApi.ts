@@ -10,13 +10,11 @@ import {
   RuntimeUpdate,
   SourceFeedback,
 } from 'types/research';
-
-const API_BASE_URL = process.env.REACT_APP_BACKEND_URL || 'http://localhost:8000';
-const API_KEY = process.env.REACT_APP_API_KEY;
+import { API_BASE_URL, API_KEY } from './config';
 
 const client = axios.create({ baseURL: API_BASE_URL });
 client.interceptors.request.use((config) => {
-  if (!API_KEY) throw new Error('REACT_APP_API_KEY is not configured.');
+  if (!API_KEY) throw new Error('VITE_API_KEY is not configured.');
   config.headers['X-API-Key'] = API_KEY;
   return config;
 });

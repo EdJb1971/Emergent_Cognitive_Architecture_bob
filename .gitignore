@@ -85,6 +85,7 @@ frontend/.vercel/
 frontend/coverage/
 frontend/.env.local
 frontend/.env*
+!frontend/.env.example
 
 # OS files
 .DS_Store

@@ -1,13 +1,11 @@
 import axios from 'axios';
 import { DashboardMetrics, HistoricalData } from 'types/dashboard';
-
-const API_BASE_URL = process.env.REACT_APP_BACKEND_URL || 'http://localhost:8000';
-const API_KEY = process.env.REACT_APP_API_KEY;
+import { API_BASE_URL, API_KEY, WS_BASE_URL } from './config';
 
 export const getDashboardMetrics = async (): Promise<DashboardMetrics> => {
   if (!API_KEY) {
-    console.error('Configuration Error: REACT_APP_API_KEY is not set.');
-    throw new Error('API key is missing. Please configure REACT_APP_API_KEY.');
+    console.error('Configuration Error: VITE_API_KEY is not set.');
+    throw new Error('API key is missing. Please configure VITE_API_KEY.');
   }
 
   try {
@@ -29,8 +27,8 @@ export const getDashboardMetrics = async (): Promise<DashboardMetrics> => {
 
 export const getDashboardHistory = async (hours: number = 24, metricTypes?: string[]): Promise<HistoricalData> => {
   if (!API_KEY) {
-    console.error('Configuration Error: REACT_APP_API_KEY is not set.');
-    throw new Error('API key is missing. Please configure REACT_APP_API_KEY.');
+    console.error('Configuration Error: VITE_API_KEY is not set.');
+    throw new Error('API key is missing. Please configure VITE_API_KEY.');
   }
 
   try {
@@ -57,8 +55,8 @@ export const getDashboardHistory = async (hours: number = 24, metricTypes?: stri
 
 export const getDashboardCorrelations = async (hours: number = 24, userId?: string): Promise<any> => {
   if (!API_KEY) {
-    console.error('Configuration Error: REACT_APP_API_KEY is not set.');
-    throw new Error('API key is missing. Please configure REACT_APP_API_KEY.');
+    console.error('Configuration Error: VITE_API_KEY is not set.');
+    throw new Error('API key is missing. Please configure VITE_API_KEY.');
   }
 
   try {
@@ -85,7 +83,7 @@ export const getDashboardCorrelations = async (hours: number = 24, userId?: stri
 
 // WebSocket connection for real-time updates
 export const createDashboardWebSocket = (onMessage: (data: any) => void, onError?: (error: Event) => void): WebSocket => {
-  const wsUrl = `${API_BASE_URL.replace('http', 'ws')}/ws/dashboard`;
+  const wsUrl = `${WS_BASE_URL}/ws/dashboard`;
 
   const ws = new WebSocket(wsUrl);
 
@@ -119,8 +117,8 @@ export const createDashboardWebSocket = (onMessage: (data: any) => void, onError
 // Statistical Analysis APIs
 export const getDashboardStatisticalAnalysis = async (metricSeries: string, analysisType: string = 'comprehensive') => {
   if (!API_KEY) {
-    console.error('Configuration Error: REACT_APP_API_KEY is not set.');
-    throw new Error('API key is missing. Please configure REACT_APP_API_KEY.');
+    console.error('Configuration Error: VITE_API_KEY is not set.');
+    throw new Error('API key is missing. Please configure VITE_API_KEY.');
   }
 
   try {
@@ -146,8 +144,8 @@ export const getDashboardStatisticalAnalysis = async (metricSeries: string, anal
 
 export const compareDashboardMetrics = async (group1Metric: string, group2Metric: string, testType: string = 'auto') => {
   if (!API_KEY) {
-    console.error('Configuration Error: REACT_APP_API_KEY is not set.');
-    throw new Error('API key is missing. Please configure REACT_APP_API_KEY.');
+    console.error('Configuration Error: VITE_API_KEY is not set.');
+    throw new Error('API key is missing. Please configure VITE_API_KEY.');
   }
 
   try {
@@ -174,8 +172,8 @@ export const compareDashboardMetrics = async (group1Metric: string, group2Metric
 
 export const getLearningCurvesAnalysis = async () => {
   if (!API_KEY) {
-    console.error('Configuration Error: REACT_APP_API_KEY is not set.');
-    throw new Error('API key is missing. Please configure REACT_APP_API_KEY.');
+    console.error('Configuration Error: VITE_API_KEY is not set.');
+    throw new Error('API key is missing. Please configure VITE_API_KEY.');
   }
 
   try {
@@ -198,8 +196,8 @@ export const getLearningCurvesAnalysis = async () => {
 // Research Export APIs
 export const exportDashboardData = async (format: 'csv' | 'json', dataType: string) => {
   if (!API_KEY) {
-    console.error('Configuration Error: REACT_APP_API_KEY is not set.');
-    throw new Error('API key is missing. Please configure REACT_APP_API_KEY.');
+    console.error('Configuration Error: VITE_API_KEY is not set.');
+    throw new Error('API key is missing. Please configure VITE_API_KEY.');
   }
 
   try {
@@ -244,8 +242,8 @@ export const exportDashboardData = async (format: 'csv' | 'json', dataType: stri
 
 export const generateResearchReport = async (analysisPeriodDays: number = 30) => {
   if (!API_KEY) {
-    console.error('Configuration Error: REACT_APP_API_KEY is not set.');
-    throw new Error('API key is missing. Please configure REACT_APP_API_KEY.');
+    console.error('Configuration Error: VITE_API_KEY is not set.');
+    throw new Error('API key is missing. Please configure VITE_API_KEY.');
   }
 
   try {
@@ -280,8 +278,8 @@ export interface ProactiveMessage {
 
 export const getProactiveMessage = async (): Promise<ProactiveMessage> => {
   if (!API_KEY) {
-    console.error('Configuration Error: REACT_APP_API_KEY is not set.');
-    throw new Error('API key is missing. Please configure REACT_APP_API_KEY.');
+    console.error('Configuration Error: VITE_API_KEY is not set.');
+    throw new Error('API key is missing. Please configure VITE_API_KEY.');
   }
 
   try {
@@ -303,8 +301,8 @@ export const getProactiveMessage = async (): Promise<ProactiveMessage> => {
 
 export const recordProactiveReaction = async (messageId: string, userResponse: string): Promise<void> => {
   if (!API_KEY) {
-    console.error('Configuration Error: REACT_APP_API_KEY is not set.');
-    throw new Error('API key is missing. Please configure REACT_APP_API_KEY.');
+    console.error('Configuration Error: VITE_API_KEY is not set.');
+    throw new Error('API key is missing. Please configure VITE_API_KEY.');
   }
 
   try {
@@ -328,8 +326,8 @@ export const recordProactiveReaction = async (messageId: string, userResponse: s
 
 export const testProactiveMessage = async (triggerType: string, messageContent: string): Promise<any> => {
   if (!API_KEY) {
-    console.error('Configuration Error: REACT_APP_API_KEY is not set.');
-    throw new Error('API key is missing. Please configure REACT_APP_API_KEY.');
+    console.error('Configuration Error: VITE_API_KEY is not set.');
+    throw new Error('API key is missing. Please configure VITE_API_KEY.');
   }
 
   try {

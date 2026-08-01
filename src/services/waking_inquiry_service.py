@@ -12,11 +12,13 @@ from src.models.research_models import (
     InquiryReviewDisposition,
     InquiryStatus,
     ResearchPacketStatus,
+    ResearchLedgerEventType,
     WakingInquiryReviewOutcome,
 )
 from src.services.cognitive_research_drive import CognitiveResearchDrive
 from src.services.inquiry_candidate_store import InquiryCandidateStore
 from src.services.research_service import ResearchService
+from src.services.research_calibration_ledger import ResearchCalibrationLedger
 
 
 class WakingInquiryService:
@@ -29,11 +31,13 @@ class WakingInquiryService:
         research_service: ResearchService,
         *,
         require_user_approval: bool = True,
+        ledger: Optional[ResearchCalibrationLedger] = None,
     ) -> None:
         self.store = store
         self.drive = drive
         self.research_service = research_service
         self.require_user_approval = require_user_approval
+        self.ledger = ledger
 
     async def review_candidate(
         self,
@@ -58,6 +62,13 @@ class WakingInquiryService:
             source="waking_inquiry_revalidation",
             user_id=str(user_id),
         )
+        if self.ledger:
+            await self.ledger.record_assessment(
+                fresh,
+                user_id=user_id,
+                inquiry_id=inquiry_id,
+                event_type=ResearchLedgerEventType.WAKING_REVALIDATION,
+            )
 
         if local_resolution:
             candidate = await self.store.record_review(
@@ -67,12 +78,12 @@ class WakingInquiryService:
                 InquiryStatus.RESOLVED_LOCALLY,
                 resolution=local_resolution[:2000],
             )
-            return WakingInquiryReviewOutcome(
+            return await self._finalize(user_id, WakingInquiryReviewOutcome(
                 candidate=candidate,
                 disposition=InquiryReviewDisposition.RESOLVED_LOCALLY,
                 assessment=fresh,
                 rationale="Waking cognition supplied a sufficient local resolution.",
-            )
+            ))
 
         if fresh.recommended_action == CognitiveEffortAction.ROUTINE_LOCAL:
             candidate = await self.store.record_review(
@@ -82,12 +93,12 @@ class WakingInquiryService:
                 InquiryStatus.RESOLVED_LOCALLY,
                 resolution="Fresh waking assessment no longer justified external research.",
             )
-            return WakingInquiryReviewOutcome(
+            return await self._finalize(user_id, WakingInquiryReviewOutcome(
                 candidate=candidate,
                 disposition=InquiryReviewDisposition.RESOLVED_LOCALLY,
                 assessment=fresh,
                 rationale="The research drive fell below the local-effort threshold.",
-            )
+            ))
 
         if fresh.effective_action != CognitiveEffortAction.AUTHORIZE_RESEARCH:
             candidate = await self.store.record_review(
@@ -97,12 +108,12 @@ class WakingInquiryService:
                 InquiryStatus.QUEUED,
                 resolution="Deferred by shadow mode, inhibition, or insufficient evidence.",
             )
-            return WakingInquiryReviewOutcome(
+            return await self._finalize(user_id, WakingInquiryReviewOutcome(
                 candidate=candidate,
                 disposition=InquiryReviewDisposition.DEFERRED,
                 assessment=fresh,
                 rationale="The active cognitive controller did not authorize provider contact.",
-            )
+            ))
 
         explicit_waking_request = (
             claimed.source_type.value == "waking" and fresh.signals.explicit_user_request
@@ -115,12 +126,12 @@ class WakingInquiryService:
                 InquiryStatus.QUEUED,
                 resolution="Awaiting explicit user approval for external research.",
             )
-            return WakingInquiryReviewOutcome(
+            return await self._finalize(user_id, WakingInquiryReviewOutcome(
                 candidate=candidate,
                 disposition=InquiryReviewDisposition.AWAITING_USER_APPROVAL,
                 assessment=fresh,
                 rationale="Offline inquiries require waking user approval before leaving the machine.",
-            )
+            ))
 
         approved = await self.store.record_review(
             inquiry_id,
@@ -145,12 +156,12 @@ class WakingInquiryService:
                 InquiryStatus.RESEARCH_FAILED,
                 resolution=f"Research boundary failed safely ({type(error).__name__}).",
             )
-            return WakingInquiryReviewOutcome(
+            return await self._finalize(user_id, WakingInquiryReviewOutcome(
                 candidate=candidate,
                 disposition=InquiryReviewDisposition.RESEARCH_FAILED,
                 assessment=fresh,
                 rationale="Research failed safely; no external content was synthesized.",
-            )
+            ))
         completed = [
             packet
             for packet in research_outcome.packets
@@ -164,13 +175,13 @@ class WakingInquiryService:
                 resolution=f"Grounded research completed ({research_outcome.decision.decision_id}).",
             )
             self.drive.record_research_execution(str(user_id))
-            return WakingInquiryReviewOutcome(
+            return await self._finalize(user_id, WakingInquiryReviewOutcome(
                 candidate=candidate,
                 disposition=InquiryReviewDisposition.RESEARCHED,
                 assessment=fresh,
                 research_outcome=research_outcome,
                 rationale="Grounded, source-validated research completed.",
-            )
+            ))
 
         candidate = await self.store.transition(
             inquiry_id,
@@ -178,10 +189,47 @@ class WakingInquiryService:
             InquiryStatus.RESEARCH_FAILED,
             resolution=f"Research failed or was blocked ({research_outcome.decision.disposition.value}).",
         )
-        return WakingInquiryReviewOutcome(
+        return await self._finalize(user_id, WakingInquiryReviewOutcome(
             candidate=candidate,
             disposition=InquiryReviewDisposition.RESEARCH_FAILED,
             assessment=fresh,
             research_outcome=research_outcome,
             rationale="No valid grounded packet was available; no research content was synthesized.",
+        ))
+
+    async def _finalize(
+        self,
+        user_id: UUID,
+        outcome: WakingInquiryReviewOutcome,
+    ) -> WakingInquiryReviewOutcome:
+        if not self.ledger:
+            return outcome
+        await self.ledger.append(
+            ResearchLedgerEventType.REVIEW_RESOLVED,
+            user_id=user_id,
+            inquiry_id=outcome.candidate.inquiry_id,
+            assessment_id=outcome.assessment.assessment_id,
+            payload={
+                "disposition": outcome.disposition.value,
+                "status": outcome.candidate.status.value,
+                "rationale": outcome.rationale,
+                "resolution": outcome.candidate.resolution,
+            },
         )
+        if outcome.research_outcome:
+            decision = outcome.research_outcome.decision
+            await self.ledger.append(
+                ResearchLedgerEventType.RESEARCH_DECISION,
+                user_id=user_id,
+                inquiry_id=outcome.candidate.inquiry_id,
+                assessment_id=outcome.assessment.assessment_id,
+                decision_id=decision.decision_id,
+                payload={"decision": decision.model_dump(mode="json")},
+            )
+            for packet in outcome.research_outcome.packets:
+                await self.ledger.record_packet(
+                    packet,
+                    user_id=user_id,
+                    inquiry_id=outcome.candidate.inquiry_id,
+                )
+        return outcome

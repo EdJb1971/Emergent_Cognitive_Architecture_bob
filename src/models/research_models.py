@@ -72,6 +72,26 @@ class InquiryReviewDisposition(str, Enum):
     RESEARCH_FAILED = "research_failed"
 
 
+class ResearchLedgerEventType(str, Enum):
+    """Immutable event kinds used by the research governance audit trail."""
+
+    SHADOW_ASSESSMENT = "shadow_assessment"
+    WAKING_REVALIDATION = "waking_revalidation"
+    REVIEW_REQUESTED = "review_requested"
+    REVIEW_RESOLVED = "review_resolved"
+    RESEARCH_DECISION = "research_decision"
+    RESEARCH_PACKET = "research_packet"
+    SOURCE_FEEDBACK = "source_feedback"
+    CALIBRATION_LABEL = "calibration_label"
+
+
+class SourceQualityVerdict(str, Enum):
+    TRUSTWORTHY = "trustworthy"
+    USEFUL_WITH_CAVEATS = "useful_with_caveats"
+    POOR = "poor"
+    INCORRECT = "incorrect"
+
+
 class CognitiveResearchSignals(BaseModel):
     epistemic_uncertainty: float = Field(default=0.0, ge=0.0, le=1.0)
     cognitive_conflict: float = Field(default=0.0, ge=0.0, le=1.0)
@@ -211,3 +231,67 @@ class WakingInquiryReviewOutcome(BaseModel):
     assessment: CognitiveResearchAssessment
     research_outcome: Optional[ResearchOutcome] = None
     rationale: str
+
+
+class InquiryApproveRequest(BaseModel):
+    reason: str = Field(default="Explicit waking approval.", min_length=1, max_length=2000)
+    signals: Optional[CognitiveResearchSignals] = None
+
+
+class InquiryActionRequest(BaseModel):
+    reason: str = Field(min_length=1, max_length=2000)
+
+
+class SourceQualityFeedbackRequest(BaseModel):
+    request_id: UUID
+    source_id: str = Field(min_length=1, max_length=100)
+    verdict: SourceQualityVerdict
+    relevance: int = Field(ge=1, le=5)
+    authority: int = Field(ge=1, le=5)
+    freshness: int = Field(ge=1, le=5)
+    citation_support: int = Field(ge=1, le=5)
+    claim_supported: bool
+    notes: Optional[str] = Field(default=None, max_length=2000)
+    research_changed_answer: Optional[bool] = None
+    research_resolved_inquiry: Optional[bool] = None
+    worth_cost: Optional[bool] = None
+
+
+class CalibrationLabelRequest(BaseModel):
+    appropriate_action: CognitiveEffortAction
+    should_external_research: bool
+    local_answer_sufficient: Optional[bool] = None
+    outcome_known: bool = True
+    rationale: str = Field(min_length=1, max_length=2000)
+
+
+class ResearchLedgerEvent(BaseModel):
+    sequence: int = Field(ge=1)
+    event_id: UUID
+    event_type: ResearchLedgerEventType
+    user_id: UUID
+    inquiry_id: Optional[UUID] = None
+    cycle_id: Optional[UUID] = None
+    assessment_id: Optional[UUID] = None
+    decision_id: Optional[UUID] = None
+    request_id: Optional[UUID] = None
+    created_at: datetime
+    payload: Dict[str, object] = Field(default_factory=dict)
+    previous_hash: str
+    event_hash: str
+
+
+class InquiryDetail(BaseModel):
+    candidate: InquiryCandidate
+    ledger_events: List[ResearchLedgerEvent] = Field(default_factory=list)
+
+
+class InquiryListResponse(BaseModel):
+    inquiries: List[InquiryCandidate] = Field(default_factory=list)
+    count: int = Field(ge=0)
+
+
+class ResearchLedgerResponse(BaseModel):
+    events: List[ResearchLedgerEvent] = Field(default_factory=list)
+    count: int = Field(ge=0)
+    next_after_sequence: Optional[int] = None

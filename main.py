@@ -41,6 +41,9 @@ from src.services.inquiry_candidate_service import InquiryCandidateService
 from src.services.inquiry_candidate_store import InquiryCandidateStore
 from src.services.gemini_grounded_research_provider import GeminiGroundedResearchProvider
 from src.services.waking_inquiry_service import WakingInquiryService
+from src.services.research_calibration_ledger import ResearchCalibrationLedger
+from src.services.inquiry_review_service import InquiryReviewService
+from src.api.research_review import router as research_review_router
 from src.services.audio_input_processor import AudioInputProcessor
 from src.providers import ModelExecutionScheduler, OllamaProbe
 from src.providers.factory import build_active_provider, build_synthesis_provider, enforce_local_only
@@ -234,6 +237,8 @@ async def lifespan(app: FastAPI):
         )
         app.state.inquiry_candidate_store = InquiryCandidateStore(settings.INQUIRY_DB_PATH)
         await app.state.inquiry_candidate_store.connect()
+        app.state.research_calibration_ledger = ResearchCalibrationLedger(settings.INQUIRY_DB_PATH)
+        await app.state.research_calibration_ledger.connect()
         app.state.inquiry_candidate_service = InquiryCandidateService(
             store=app.state.inquiry_candidate_store,
             drive=app.state.cognitive_research_drive,
@@ -348,6 +353,12 @@ async def lifespan(app: FastAPI):
             drive=app.state.cognitive_research_drive,
             research_service=app.state.research_service,
             require_user_approval=settings.INQUIRY_REQUIRE_USER_APPROVAL,
+            ledger=app.state.research_calibration_ledger,
+        )
+        app.state.inquiry_review_service = InquiryReviewService(
+            store=app.state.inquiry_candidate_store,
+            waking_service=app.state.waking_inquiry_service,
+            ledger=app.state.research_calibration_ledger,
         )
         logger.info(
             "ResearchService initialized (enabled=%s, provider=%s, local_only=%s).",
@@ -413,6 +424,7 @@ async def lifespan(app: FastAPI):
             cognitive_research_drive=app.state.cognitive_research_drive,
             inquiry_candidate_service=app.state.inquiry_candidate_service,
             waking_inquiry_service=app.state.waking_inquiry_service,
+            research_calibration_ledger=app.state.research_calibration_ledger,
         )
         logger.info("OrchestrationService (Central Agent) initialized successfully with Phase 1 & 2 Brain Architecture services.")
 
@@ -439,6 +451,8 @@ async def lifespan(app: FastAPI):
         await app.state.memory_service.close()
     if getattr(app.state, "inquiry_candidate_store", None):
         await app.state.inquiry_candidate_store.close()
+    if getattr(app.state, "research_calibration_ledger", None):
+        await app.state.research_calibration_ledger.close()
     if getattr(app.state, "research_service", None):
         await app.state.research_service.close()
     if getattr(app.state, "background_task_queue", None):
@@ -452,6 +466,7 @@ app = FastAPI(
     description="Multi-Agent Cognitive Architecture Backend API",
     lifespan=lifespan
 )
+app.include_router(research_review_router)
 
 # For development, allow all origins. For production, this should be more restrictive.
 app.add_middleware(

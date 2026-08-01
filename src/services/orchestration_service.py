@@ -8,7 +8,11 @@ from datetime import datetime # CQ-003 Fix: Import datetime
 from src.core.exceptions import AgentServiceException, APIException
 from src.models.core_models import UserRequest, AgentOutput, CognitiveCycle, ResponseMetadata, OutcomeSignals, ErrorAnalysis
 from src.models.agent_models import AttentionDirective
-from src.models.research_models import CognitiveEffortAction, ResearchPacketStatus
+from src.models.research_models import (
+    CognitiveEffortAction,
+    ResearchLedgerEventType,
+    ResearchPacketStatus,
+)
 from src.agents.perception_agent import PerceptionAgent
 from src.agents.emotional_agent import EmotionalAgent
 from src.agents.memory_agent import MemoryAgent
@@ -20,6 +24,7 @@ from src.services.research_service import ResearchService
 from src.services.cognitive_research_drive import CognitiveResearchDrive
 from src.services.inquiry_candidate_service import InquiryCandidateService
 from src.services.waking_inquiry_service import WakingInquiryService
+from src.services.research_calibration_ledger import ResearchCalibrationLedger
 from src.services.audio_input_processor import AudioInputProcessor
 from src.models.multimodal_models import AudioAnalysis
 from src.services.cognitive_brain import CognitiveBrain
@@ -89,6 +94,7 @@ class OrchestrationService:
         cognitive_research_drive: Optional[CognitiveResearchDrive] = None,
         inquiry_candidate_service: Optional[InquiryCandidateService] = None,
         waking_inquiry_service: Optional[WakingInquiryService] = None,
+        research_calibration_ledger: Optional[ResearchCalibrationLedger] = None,
     ):
         self.perception_agent = perception_agent
         self.emotional_agent = emotional_agent
@@ -116,6 +122,7 @@ class OrchestrationService:
         self.cognitive_research_drive = cognitive_research_drive
         self.inquiry_candidate_service = inquiry_candidate_service
         self.waking_inquiry_service = waking_inquiry_service
+        self.research_calibration_ledger = research_calibration_ledger
         self.session_start = datetime.utcnow()  # Track session start for contextual encoding
         logger.info("OrchestrationService (Central Agent) initialized with all specialized agents, Cognitive Brain, Memory Service, Background Task Queue, Self-Reflection & Discovery Engine, Working Memory Buffer, Thalamus Gateway, Conflict Monitor, Contextual Memory Encoder, Emotional Memory Service, Meta-Cognitive Monitor, optional Attention Controller, and optional Reinforcement Learning Service.")
 
@@ -730,6 +737,23 @@ class OrchestrationService:
                         user_id=str(user_request.user_id),
                     )
                     cognitive_cycle.metadata["cognitive_research_drive"] = drive_assessment.model_dump(mode="json")
+                    if self.research_calibration_ledger and drive_assessment.shadow_mode:
+                        try:
+                            ledger_event = await self.research_calibration_ledger.record_assessment(
+                                drive_assessment,
+                                user_id=user_request.user_id,
+                                cycle_id=cognitive_cycle.cycle_id,
+                                event_type=ResearchLedgerEventType.SHADOW_ASSESSMENT,
+                            )
+                            cognitive_cycle.metadata["research_calibration_event_id"] = str(
+                                ledger_event.event_id
+                            )
+                        except Exception as ledger_error:
+                            logger.warning(
+                                "Cycle %s: research calibration observation failed safely (%s)",
+                                cognitive_cycle.cycle_id,
+                                type(ledger_error).__name__,
+                            )
 
                     if (
                         self.inquiry_candidate_service

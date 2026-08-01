@@ -19,6 +19,7 @@ from src.services.cognitive_research_drive import CognitiveResearchDrive
 from src.services.escalation_policy import EscalationPolicy
 from src.services.inquiry_candidate_store import InquiryCandidateStore
 from src.services.research_service import ResearchService
+from src.services.research_calibration_ledger import ResearchCalibrationLedger
 from src.services.waking_inquiry_service import WakingInquiryService
 
 
@@ -115,10 +116,13 @@ async def test_approved_waking_review_completes_grounded_research(tmp_path):
     candidate = await _queued_candidate(store, user_id)
     drive = CognitiveResearchDrive(enabled=True, shadow_mode=False)
     provider = GroundedProvider()
+    ledger = ResearchCalibrationLedger(tmp_path / "inquiries.sqlite3")
+    await ledger.connect()
     service = WakingInquiryService(
         store,
         drive,
         ResearchService(EscalationPolicy(research_enabled=True), provider),
+        ledger=ledger,
     )
 
     outcome = await service.review_candidate(
@@ -132,6 +136,13 @@ async def test_approved_waking_review_completes_grounded_research(tmp_path):
     assert outcome.candidate.status == InquiryStatus.RESEARCHED
     assert outcome.research_outcome.packets[0].grounding_verified is True
     assert len(provider.requests) == 1
+    events = await ledger.list_events(user_id, inquiry_id=candidate.inquiry_id)
+    assert [event.event_type.value for event in events] == [
+        "waking_revalidation",
+        "review_resolved",
+        "research_decision",
+        "research_packet",
+    ]
 
 
 @pytest.mark.asyncio

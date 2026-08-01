@@ -15,6 +15,7 @@ from src.services.meta_cognitive_monitor import ActionRecommendation, GapType
 from src.services.research_service import DisabledResearchProvider, ResearchService
 from src.services.cognitive_research_drive import CognitiveResearchDrive
 from src.services.inquiry_candidate_service import InquiryCandidateService
+from src.services.research_calibration_ledger import ResearchCalibrationLedger
 from src.agents.perception_agent import PerceptionAgent
 from src.agents.emotional_agent import EmotionalAgent
 from src.agents.memory_agent import MemoryAgent
@@ -231,6 +232,11 @@ async def test_waking_cycle_records_shadow_research_drive_and_queues_inquiry(orc
     inquiry_service = MagicMock(spec=InquiryCandidateService)
     inquiry_service.propose_waking = AsyncMock(return_value=None)
     orchestration_service.inquiry_candidate_service = inquiry_service
+    ledger = MagicMock(spec=ResearchCalibrationLedger)
+    ledger.record_assessment = AsyncMock(
+        return_value=SimpleNamespace(event_id=uuid4())
+    )
+    orchestration_service.research_calibration_ledger = ledger
     request = UserRequest(
         user_id=uuid4(),
         input_text="Please search the web for the latest institute director.",
@@ -246,6 +252,8 @@ async def test_waking_cycle_records_shadow_research_drive_and_queues_inquiry(orc
     assert assessment["shadow_mode"] is True
     assert assessment["signals"]["persistence_after_local_attempts"] == 0.0
     inquiry_service.propose_waking.assert_awaited_once()
+    ledger.record_assessment.assert_awaited_once()
+    assert "research_calibration_event_id" in cycle.metadata
 
 
 @pytest.mark.asyncio

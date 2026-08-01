@@ -54,19 +54,19 @@ def test_same_dimension_different_model_is_rejected():
         apply_embedding_identity(collection, OLLAMA)
 
 
-def test_populated_legacy_collection_is_rejected_for_a_new_provider():
+def test_populated_untagged_collection_is_rejected():
+    """Vectors of unknown provenance must be rebuilt, never assumed compatible."""
     collection = _collection("cognitive_cycles", metadata=None, count=10)
 
     with pytest.raises(EmbeddingIdentityMismatch):
         apply_embedding_identity(collection, OLLAMA)
 
 
-def test_populated_legacy_collection_is_accepted_for_the_legacy_provider():
+def test_populated_untagged_collection_is_also_rejected_for_gemini():
     collection = _collection("cognitive_cycles", metadata=None, count=10)
 
-    apply_embedding_identity(collection, GEMINI)
-
-    collection.modify.assert_not_called()
+    with pytest.raises(EmbeddingIdentityMismatch):
+        apply_embedding_identity(collection, GEMINI)
 
 
 def test_enforcement_can_be_disabled_for_recovery():

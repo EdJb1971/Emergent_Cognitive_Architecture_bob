@@ -19,25 +19,53 @@ Do not mark a capability validated merely because its service class exists. Lear
 
 ## Current Progress
 
-**Completed on August 1, 2026:**
+**The system ran end to end for the first time on August 1, 2026.** Before this date nothing had ever executed: `.env` held placeholder credentials and no `chroma_db` existed. Every prior status claim was therefore about code that had never run.
 
-- Test collection and the current backend suite are repaired: `64 passed, 3 skipped` using the repository virtual environment.
-- The Gemini-specific service now sits behind a minimal provider contract and `GeminiProvider` compatibility adapter.
-- `OllamaProbe` checks `/api/tags` and `/health/deep` reports local server/model availability.
-- Ollama `0.32.5` is running locally and `gemma4:e4b` is installed. The model passed a GPU text smoke test.
-- `ModelExecutionScheduler`, `ProviderRequest`, `ProviderResult`, and a text-only `OllamaProvider` are implemented and covered by provider-contract tests. Scheduler limits are visible through `/health/deep`.
-- `gemma4:e4b` returns `501 Not Implemented` from Ollama's embedding endpoint. It is therefore a local generation model only; a separate local embedding model is required before full local routing.
-- `embeddinggemma:latest` is installed and verified through `OllamaEmbeddingProvider`. Its runtime vector dimension is `768`.
-- **Provider selection is now configuration-driven.** `_build_active_provider()` resolves generation, embedding, and moderation independently from `LLM_PROVIDER`, `EMBEDDING_PROVIDER`, and `MODERATION_PROVIDER`, composing them through `CompositeProvider` only when they differ. Unknown values fail startup.
-- **`GEMINI_API_KEY` is optional.** It is required only when a Gemini-backed role is selected, so a fully local configuration can start without a cloud credential. Gemini remains the configured default because it is the only cloud key currently held; nothing in the architecture depends on it.
-- **`CompositeProvider.is_local` accounts for the safety provider**, so a cloud moderation call can no longer hide inside an otherwise-local configuration. This is the flag `LOCAL_ONLY_MODE` will key off in Phase 6.
-- **Embedding identity is enforced at the collection boundary.** `EmbeddingProvider.verify()` resolves the runtime dimension at startup; embedding-backed collections are stamped with provider/model/dimension; `apply_embedding_identity()` compares provider and model and raises `EmbeddingIdentityMismatch` on conflict. Untagged non-empty collections are treated as legacy `gemini/models/embedding-001`.
-- The guard deliberately does **not** compare dimensions. Gemini `embedding-001` and `embeddinggemma` are both 768-dimensional, so a dimension check would have accepted two incompatible vector spaces and degraded retrieval silently rather than failing.
-- `/health/deep` now reports the active provider per role, `is_local`, and the resolved embedding identity.
+**Verified by running it:**
 
-**Known consequence:** setting `EMBEDDING_PROVIDER=ollama` against the existing database now fails at startup, by design. This is the correct behavior and stays until the migration command in Phase 3 exists.
+- A full `/chat` cognitive cycle completes. Fully local: 103s. Local agents with Gemini synthesis: 44.8s first turn, 66.8s with memory context.
+- Memory closes the loop. A second turn correctly recalled a name and detail stored by the first, retrieved from ChromaDB with local embeddings.
+- Local-only operation is real: with all roles on `ollama` the cycle makes no cloud call.
+- Warm local inference is ~1.1s per agent call; the 17.9s first call is model load into VRAM.
+- `format: json` gives reliable structured output from `gemma4:e4b` (4/4 valid on a smoke test), so agents no longer depend on parsing prose.
+- Collections are stamped with their embedding identity on creation: `cognitive_cycles` and `conversation_summaries` carry `ollama/embeddinggemma:latest@768d`.
 
-**Next action:** Build the versioned re-embedding command (Phase 3 step 3) and the retrieval fixture set (Phase 7 step 2), then compare local against Gemini retrieval before switching any collection.
+**Bugs found only by running it, now fixed:**
+
+- `TokenCounter` called the Gemini API for *every* token count, with 3 retries and exponential backoff. A cloud round-trip sat in the hot path of every memory operation, and it silently broke the local-only claim. Now a local estimator.
+- Chroma's `DefaultEmbeddingFunction()` downloaded an 80 MB ONNX model at startup for a model never used, since vectors are always supplied explicitly. It blocked first boot on a network download.
+- `generate_error_analysis` is synchronous on both `ConflictMonitor` and `MetaCognitiveMonitor` but was awaited, raising on every cycle.
+- `gemma4:e4b` is a reasoning model. It consumed the whole output budget on thinking tokens and returned an empty response with `done_reason=length`, silently failing every summary update. Fixed with `OLLAMA_THINKING=false`.
+- Ollama's default context window truncated long prompts; `OLLAMA_NUM_CTX` is now always sent.
+- `EMBEDDING_MODEL_NAME` was `models/embedding-001`, which the API does not offer. Real identifiers were confirmed with `python -m src.tools.list_models`.
+
+All four recurring error classes are now at zero across a two-turn conversation.
+
+**Provider work:**
+
+- Generation, embedding, moderation, and synthesis are independently selectable. `SYNTHESIS_PROVIDER` allows local agents with a cloud synthesiser without making the cloud a dependency of the cycle.
+- `GEMINI_API_KEY` is optional; a fully local configuration starts without it.
+- `LOCAL_ONLY_MODE=true` fails startup if any role is remote.
+- `CompositeProvider.is_local` accounts for the safety provider, so cloud moderation cannot hide in an otherwise-local setup.
+- Embedding identity is enforced by provider and model, never dimension, because Gemini `embedding-001` and `embeddinggemma` are both 768-dimensional.
+- Tooling: `src.tools.list_models`, `src.tools.reembed`, `src.tools.eval_retrieval`.
+
+**Test baseline:** `96 passed, 3 skipped`.
+
+**Latency is now measured, not guessed.** `StageTimer` wraps every orchestrator stage and emits a `CYCLE_TIMING` line plus `metadata["stage_timings_ms"]`; `OLLAMA_CALL` and `OLLAMA_EMBED` lines give per-request server, queue, prompt-eval, and eval time. Three cycles on August 1, 2026 overturned the previous assumption:
+
+- Orchestration costs **under 200ms per cycle**. Routing, both conflict checks, contextual encoding, theory-of-mind validation, and RL updates are collectively free. The "~40s of orchestration overhead" theory was wrong.
+- The cost is **local token generation at ~26 tokens/second**. Prompt evaluation is 0.4-0.8s and model load a constant ~0.8s per call; everything else is tokens coming out.
+- The earlier "warm agent call ~1.1s" figure was a trivial smoke-test prompt. Real agent calls generate 80-600 tokens and cost 4-25s each.
+- Three stages own the whole cycle: `stage1_agents`/`stage2_agents` (20-57s, serialised by `max_interactive=1`), `meta_cognitive` (20-25s for a *single* unbounded call producing 483-605 tokens), and `memory_upsert` (16-22s, containing a ~12s summarisation LLM call the user waits for).
+- Gemini synthesis is 3.0-3.2s and consistently the cheapest stage in the cycle.
+- Per-agent `AGENT_METRIC` durations were previously always ~0ms because the timer started after `asyncio.gather` had already returned. Now measured correctly.
+
+**Next action:** Cut generated tokens and move work off the critical path, in that order:
+
+1. Cap `max_output_tokens` on the meta-cognitive assessment. It is a routing decision, not an essay, and currently costs a third of a cycle.
+2. Move `memory_upsert`'s summarisation off the response path into the background queue. The user should not wait ~12s for a summary they never see.
+3. Only then consider raising `max_interactive` — it trades latency for VRAM contention, and should be decided with the queue numbers the instrumentation now provides.
 
 ## Direction
 
@@ -347,9 +375,11 @@ Still open:
 
 1. Complete: Phase 0 test repair and runtime baseline.
 2. Complete: Phase 1 provider boundary and Phase 2 local adapter/scheduler, except the structured-output repair boundary.
-3. **Active:** Phase 3 migration command plus the Phase 7 retrieval fixture set, then measure local against Gemini retrieval.
-4. Then the structured-output parse/repair boundary, which unblocks routing agents to the local model.
-5. Then Phase 5 and Phase 6: controlled cloud research escalation, local-only enforcement, and hybrid observability.
-6. Then Phase 8 through Phase 10: validate learning, attention, salience, and autonomous task mechanisms before adding predictive cognition.
+3. Complete: cycle latency instrumentation. Per-stage and per-request timing is emitted on every cycle, and the bottleneck is identified.
+4. **Active:** Latency reduction driven by those numbers — bound the meta-cognitive output budget, then move summarisation off the response path.
+5. Then Phase 3 migration verification plus the Phase 7 retrieval fixture set, then measure local against Gemini retrieval.
+6. Then the structured-output parse/repair boundary, which unblocks routing agents to the local model.
+7. Then Phase 5 and Phase 6: controlled cloud research escalation, local-only enforcement, and hybrid observability.
+8. Then Phase 8 through Phase 10: validate learning, attention, salience, and autonomous task mechanisms before adding predictive cognition.
 
-The next slice is the re-embedding migration command and the retrieval fixture set. Until retrieval is measured, the identity guard is what keeps the existing memory intact.
+The next slice is latency reduction. It is now an evidence-driven change rather than a guess: the instrumentation names the three stages that own the cycle, so each fix can be verified against the same `CYCLE_TIMING` line that motivated it.

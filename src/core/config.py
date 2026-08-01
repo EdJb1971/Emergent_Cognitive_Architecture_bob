@@ -17,10 +17,11 @@ class Settings(BaseSettings):
     # LLM Integration Service Settings
     # Optional: only required when a Gemini-backed provider is actually selected.
     GEMINI_API_KEY: Optional[str] = Field(None, env="GEMINI_API_KEY")
-    LLM_MODEL_NAME: str = "models/gemini-2.5-flash-lite" # Default LLM model for text generation by agents
-    EMBEDDING_MODEL_NAME: str = "models/embedding-001" # Default LLM model for embedding generation
-    LLM_MODEL_FOR_RESPONSE_GENERATION: str = "models/gemini-2.5-flash-lite" # Specific model for Cognitive Brain's final response
-    LLM_MODEL_FOR_MODERATION: str = "models/gemini-2.0-flash-lite" # Specific model for content moderation
+    # Model identifiers verified against the Gemini model list on 2026-08-01.
+    LLM_MODEL_NAME: str = "models/gemini-3.5-flash-lite" # Default LLM model for text generation by agents
+    EMBEDDING_MODEL_NAME: str = "models/gemini-embedding-001" # Default LLM model for embedding generation
+    LLM_MODEL_FOR_RESPONSE_GENERATION: str = "models/gemini-3.5-flash-lite" # Specific model for Cognitive Brain's final response
+    LLM_MODEL_FOR_MODERATION: str = "models/gemini-3.5-flash-lite" # Specific model for content moderation
     LLM_PROVIDER: str = Field("gemini", env="LLM_PROVIDER")
     OLLAMA_BASE_URL: str = Field("http://localhost:11434", env="OLLAMA_BASE_URL")
     OLLAMA_CHAT_MODEL: str = Field("", env="OLLAMA_CHAT_MODEL")
@@ -28,7 +29,15 @@ class Settings(BaseSettings):
     OLLAMA_EMBEDDING_MODEL: str = Field("", env="OLLAMA_EMBEDDING_MODEL")
     OLLAMA_MAX_INTERACTIVE_REQUESTS: int = Field(1, env="OLLAMA_MAX_INTERACTIVE_REQUESTS")
     OLLAMA_MAX_BACKGROUND_REQUESTS: int = Field(1, env="OLLAMA_MAX_BACKGROUND_REQUESTS")
+    # Reasoning models consume the whole output budget on thinking tokens and return an empty response.
+    OLLAMA_THINKING: bool = Field(False, env="OLLAMA_THINKING")
+    # Ollama silently truncates to a small default context, which makes long prompts return nothing.
+    OLLAMA_NUM_CTX: int = Field(16384, env="OLLAMA_NUM_CTX")
     MODERATION_PROVIDER: str = Field("gemini", env="MODERATION_PROVIDER")
+    # Empty means the final response is synthesised by the same provider as the agents.
+    SYNTHESIS_PROVIDER: str = Field("", env="SYNTHESIS_PROVIDER")
+    # Refuses to start if any role resolves to a provider that leaves the machine.
+    LOCAL_ONLY_MODE: bool = Field(False, env="LOCAL_ONLY_MODE")
     # Fails startup when a collection's stored embedding identity differs from the active provider.
     EMBEDDING_IDENTITY_ENFORCED: bool = Field(True, env="EMBEDDING_IDENTITY_ENFORCED")
 

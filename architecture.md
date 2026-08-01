@@ -19,16 +19,42 @@ This document describes the Emergent Cognitive Architecture (ECA), a brain-inspi
 | Memory consolidation | Implemented service, not automatically scheduled | `MemoryConsolidationService` can create and execute jobs, but app startup does not start a periodic 30-minute loop or enqueue jobs automatically. |
 | Metrics/dashboard | Partial | REST metrics and research endpoints exist. Metrics ChromaDB initialization is asynchronous and not awaited at startup. The WebSocket sends an initial snapshot then waits for client messages; broadcast updates are not implemented. |
 | Multimodal input | Partial | Audio transcription is wired into the cycle. `VisualInputProcessor` exists but is not wired into application startup or the cognitive cycle. |
-| Provider selection | Implemented, configuration-driven | `_build_active_provider()` in `main.py` resolves generation, embedding, and moderation independently from `LLM_PROVIDER`, `EMBEDDING_PROVIDER`, and `MODERATION_PROVIDER`. Mixed selections are composed by `CompositeProvider`; a uniform selection returns the single adapter. Unknown values fail startup. |
+| Provider selection | Implemented, configuration-driven | `build_active_provider()` in `src/providers/factory.py` resolves generation, embedding, moderation, and synthesis independently. Mixed selections are composed by `CompositeProvider`; a uniform selection returns the single adapter. Unknown values fail startup. |
+| End-to-end cycle | Verified running | First real `/chat` cycles completed on August 1, 2026. Fully local: 103s. Local agents with Gemini synthesis: 44.8s first turn, 66.8s with memory context. Memory recall across turns confirmed (name and detail correctly retrieved from a prior cycle). |
+| Cycle latency attribution | Measured | `StageTimer` records every orchestrator stage and emits one `CYCLE_TIMING` line per cycle; `OLLAMA_CALL` and `OLLAMA_EMBED` lines carry per-request server, queue, prompt-eval, and eval time. Measured August 1, 2026 on three cycles: latency is local token generation, not orchestration. Attribution below. |
+| Local-only operation | Verified | A complete cycle runs with `LLM_PROVIDER`, `EMBEDDING_PROVIDER`, and `MODERATION_PROVIDER` all set to `ollama`, making no cloud call. `LOCAL_ONLY_MODE=true` fails startup if any role resolves to a remote provider. |
+| Token counting | Local | `TokenCounter` uses a local estimator. It previously called the Gemini API per count, which put a network round-trip and a retry/backoff storm in the hot path of every memory operation. |
 | Provider neutrality | Implemented at the seam, Gemini-configured | `GEMINI_API_KEY` is optional and is only required when a Gemini-backed provider is actually selected. No agent imports a provider SDK or hardcodes a model name. The shipped default configuration selects Gemini for all three roles because that is the only cloud key currently held. |
 | Ollama text generation | Implemented, not the default | `OllamaProvider` is selectable via `LLM_PROVIDER=ollama` and admitted through `ModelExecutionScheduler`. `gemma4:e4b` completed a local GPU text smoke test on August 1, 2026. Its Ollama embedding endpoint returns `501 Not Implemented`, so it is a generation-only model. |
-| Local embeddings | Implemented and selectable; migration outstanding | `embeddinggemma:latest` returns local `768`-dimension vectors through `OllamaEmbeddingProvider`. Selecting it today is blocked at startup by the identity guard below, because existing collections hold Gemini vectors. |
+| Local embeddings | Verified running | `embeddinggemma:latest` returns local `768`-dimension vectors through `OllamaEmbeddingProvider` and is the configured embedding role. Measured cost is ~250ms per single-text embed. |
 | Embedding identity guard | Implemented | Collections are stamped with `embedding_provider`, `embedding_model`, and `embedding_dimension`. `apply_embedding_identity()` compares provider and model, never dimension, and refuses to open a collection written by a different embedding model. Untagged non-empty collections are treated as legacy `gemini/models/embedding-001`. |
-| Vector migration | Not implemented | There is no command to rebuild an existing collection into a new vector space, and no measured retrieval comparison between Gemini and local embeddings. |
+| Vector migration | Implemented, not yet run | `python -m src.tools.reembed` rebuilds a collection into a new identity-stamped collection. It never modifies the source, resumes by skipping ids already written, supports `--dry-run` and `--limit`, and refuses to migrate into the vector space a collection already holds. |
+| Retrieval evaluation | Harness implemented, no measurement yet | `python -m src.tools.eval_retrieval` reports recall@k, MRR, and NDCG@k, querying each collection with the provider that produced its vectors. No fixture set has been authored and no baseline has been recorded, so no retrieval claim is currently supported by evidence. |
 | Salience network | Planned | There is a feature flag only; no `SalienceNetwork` implementation is present. |
-| Validation | Repaired baseline | The repository virtual environment runs `64 passed, 3 skipped` on August 1, 2026. This is a regression baseline, not evidence that learning, retrieval, or routing quality has been measured. |
+| Validation | Repaired baseline | The repository virtual environment runs `96 passed, 3 skipped` on August 1, 2026. This is a regression baseline, not evidence that learning, retrieval, or routing quality has been measured. |
 
 The phase sections below retain the design intent. Treat statements about autonomous background execution, measured performance improvements, or real-time streaming as planned unless this status section explicitly marks them implemented.
+
+### Measured cycle latency (August 1, 2026)
+
+Every cycle now logs `CYCLE_TIMING` with per-stage milliseconds, and `metadata["stage_timings_ms"]` carries the same numbers on the returned cycle. Three cycles with `SYNTHESIS_PROVIDER=gemini` and every other role on `gemma4:e4b`:
+
+| Stage | Cycle A (132.6s) | Cycle B (64.4s) | Cycle C (66.7s) |
+| --- | --- | --- | --- |
+| `stage1_agents` | 54.0s | 20.1s | 21.3s |
+| `stage2_agents` | 57.0s | ~0s (agents skipped) | ~0s (agents skipped) |
+| `meta_cognitive` | 1.5s | 25.0s | 20.1s |
+| `memory_upsert` | 16.7s | 16.0s | 21.8s |
+| `cognitive_brain_synthesis` (Gemini) | 3.1s | 3.0s | 3.2s |
+| everything else combined | <0.2s | <0.2s | <0.2s |
+
+What the numbers establish:
+
+- **Orchestration is not the bottleneck.** Thalamus routing, both conflict checks, contextual encoding, theory-of-mind validation, and RL updates together cost under 200ms per cycle. The earlier assumption that ~40s was orchestration overhead was wrong.
+- **The cost is local token generation.** `gemma4:e4b` evaluates at roughly 26 tokens/second on this machine. Every second of cycle time is a token being generated. Prompt evaluation is 0.4-0.8s and model load is a constant ~0.8s per call.
+- **Queueing is negligible at current concurrency.** `ModelExecutionScheduler` runs with `max_interactive=1`, so agent calls dispatched through `asyncio.gather` are serialised. Measured queue time was 11-245ms only because few calls overlapped; with all seven agents active the serialisation is what produces the 54s and 57s stage figures in Cycle A.
+- **A single unbounded call can dominate a cycle.** The meta-cognitive assessment generated 483-605 completion tokens and cost 20-25s on its own, which is 30-39% of those cycles.
+- **`memory_upsert` is on the critical path and is not just I/O.** Its 16-22s contains a summarisation LLM call (~12s, 277 completion tokens) plus roughly 1.5s of embedding calls, with the remainder in ChromaDB writes. The user waits for all of it.
 
 ## Table of Contents
 
@@ -220,6 +246,7 @@ The backend is a FastAPI application serving a RESTful API for the frontend.
 │   │   ├── base.py                  # Capabilities, request/result envelopes, embedding identity
 │   │   ├── composite_provider.py    # Independently selected generation/embedding/safety
 │   │   ├── execution_scheduler.py   # Bounded local inference admission control
+│   │   ├── factory.py               # Resolves provider roles from configuration
 │   │   ├── gemini_provider.py       # Gemini adapter (cloud)
 │   │   ├── ollama_provider.py       # Local text generation adapter
 │   │   ├── ollama_embedding_provider.py # Local embedding adapter
@@ -267,8 +294,16 @@ Services and agents never talk to a model SDK. They hold a provider object satis
 | Generation | `LLM_PROVIDER` | `GeminiProvider`, `OllamaProvider` |
 | Embeddings | `EMBEDDING_PROVIDER` | `GeminiProvider`, `OllamaEmbeddingProvider` |
 | Moderation | `MODERATION_PROVIDER` | `GeminiProvider`, `OllamaProvider` |
+| Final synthesis | `SYNTHESIS_PROVIDER` | Empty follows generation; otherwise `gemini` or `ollama` |
 
-If all three resolve to the same adapter it is used directly; otherwise `CompositeProvider` fans each call out to its selected provider. `CompositeProvider.capabilities.is_local` is true only when **all three** roles are local, so a cloud moderation call cannot be hidden behind an otherwise-local configuration.
+If generation, embedding, and moderation resolve to the same adapter it is used directly; otherwise `CompositeProvider` fans each call out to its selected provider. `CompositeProvider.capabilities.is_local` is true only when **all three** roles are local, so a cloud moderation call cannot be hidden behind an otherwise-local configuration. `LOCAL_ONLY_MODE=true` refuses to start when any role, including synthesis, is remote.
+
+Synthesis is separated because the agents and the final response have different quality requirements. Local agents with a cloud synthesiser is a supported configuration, but it sends conversation content to the provider on **every turn**, so it is opt-in rather than default.
+
+**Local model behaviour.** Two Ollama settings exist because their defaults fail silently rather than loudly:
+
+- `OLLAMA_NUM_CTX` is always sent. Ollama otherwise applies a small default context and truncates long prompts.
+- `OLLAMA_THINKING` defaults to `false`. `gemma4:e4b` is a reasoning model; left enabled it spends the entire output budget on thinking tokens and returns an empty `response` with `done_reason=length`. This silently broke every summary update until it was diagnosed.
 
 `ModelExecutionScheduler` admits local calls under separate interactive and background limits, so background work cannot starve a chat cycle of the single local model. Cloud adapters do not use it.
 
@@ -280,7 +315,30 @@ If all three resolve to the same adapter it is used directly; otherwise `Composi
 - A non-empty collection with no identity metadata predates this guard and is assumed to hold `gemini/models/embedding-001` vectors.
 - `EMBEDDING_IDENTITY_ENFORCED=false` downgrades the failure to a warning for recovery work only.
 
-The practical consequence is that switching `EMBEDDING_PROVIDER` on an existing database fails at startup by design. Changing embedding models requires rebuilding into a new collection, which is not yet implemented.
+The practical consequence is that switching `EMBEDDING_PROVIDER` on an existing database fails at startup by design. Changing embedding models is a rebuild, not a config flip.
+
+### Changing Embedding Models
+
+```bash
+# 1. See what each collection currently holds
+python -m src.tools.reembed --list
+
+# 2. Draft a retrieval fixture from real records, then review every entry by hand
+python -m src.tools.eval_retrieval --build-template --sample 60
+
+# 3. Record the baseline against the existing vector space
+python -m src.tools.eval_retrieval --collection cognitive_cycles
+
+# 4. Rebuild into a new collection (source is left untouched)
+python -m src.tools.reembed --collection cognitive_cycles --dry-run
+python -m src.tools.reembed --collection cognitive_cycles
+
+# 5. Compare like for like; each collection is queried with its own provider
+python -m src.tools.eval_retrieval --collection cognitive_cycles \
+    --compare cognitive_cycles__ollama_embeddinggemma_latest
+```
+
+Only after step 5 shows an acceptable delta should `EMBEDDING_PROVIDER` and the collection names change. The old collection remains on disk, so the previous vector space stays recoverable.
 
 ---
 

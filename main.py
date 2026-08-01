@@ -36,14 +36,8 @@ from src.agents.critic_agent import CriticAgent
 from src.agents.discovery_agent import DiscoveryAgent
 from src.services.web_browsing_service import WebBrowsingService
 from src.services.audio_input_processor import AudioInputProcessor
-from src.providers import (
-    CompositeProvider,
-    GeminiProvider,
-    ModelExecutionScheduler,
-    OllamaEmbeddingProvider,
-    OllamaProbe,
-    OllamaProvider,
-)
+from src.providers import ModelExecutionScheduler, OllamaProbe
+from src.providers.factory import build_active_provider, build_synthesis_provider, enforce_local_only
 from src.dependencies import APIKeyAuth, get_api_key_user_id # Import the authentication dependency
 from typing import Dict, Any, List, Optional
 from uuid import UUID
@@ -54,62 +48,6 @@ from src.core.exceptions import LLMServiceException, ConfigurationError
 from src.core.logging_config import setup_logging
 setup_logging()
 logger = logging.getLogger(__name__)
-
-
-def _build_active_provider(scheduler: ModelExecutionScheduler):
-    """Select generation, embedding, and safety providers independently from configuration."""
-    cached_gemini: Optional[GeminiProvider] = None
-
-    def gemini() -> GeminiProvider:
-        nonlocal cached_gemini
-        if cached_gemini is None:
-            cached_gemini = GeminiProvider(LLMIntegrationService())
-        return cached_gemini
-
-    def require_ollama_model(name: str, setting: str):
-        if not name:
-            raise ConfigurationError(detail=f"{setting} must be set when Ollama is selected.")
-        return name
-
-    generation_choice = settings.LLM_PROVIDER.lower()
-    if generation_choice == "ollama":
-        generation = OllamaProvider(
-            base_url=settings.OLLAMA_BASE_URL,
-            model=require_ollama_model(settings.OLLAMA_CHAT_MODEL, "OLLAMA_CHAT_MODEL"),
-            scheduler=scheduler,
-        )
-    elif generation_choice == "gemini":
-        generation = gemini()
-    else:
-        raise ConfigurationError(detail=f"Unsupported LLM_PROVIDER '{settings.LLM_PROVIDER}'.")
-
-    embedding_choice = settings.EMBEDDING_PROVIDER.lower()
-    if embedding_choice == "ollama":
-        embedding = OllamaEmbeddingProvider(
-            base_url=settings.OLLAMA_BASE_URL,
-            model=require_ollama_model(settings.OLLAMA_EMBEDDING_MODEL, "OLLAMA_EMBEDDING_MODEL"),
-            scheduler=scheduler,
-        )
-    elif embedding_choice == "gemini":
-        embedding = gemini()
-    else:
-        raise ConfigurationError(detail=f"Unsupported EMBEDDING_PROVIDER '{settings.EMBEDDING_PROVIDER}'.")
-
-    moderation_choice = settings.MODERATION_PROVIDER.lower()
-    if moderation_choice == "ollama":
-        safety = generation if generation_choice == "ollama" else OllamaProvider(
-            base_url=settings.OLLAMA_BASE_URL,
-            model=require_ollama_model(settings.OLLAMA_CHAT_MODEL, "OLLAMA_CHAT_MODEL"),
-            scheduler=scheduler,
-        )
-    elif moderation_choice == "gemini":
-        safety = gemini()
-    else:
-        raise ConfigurationError(detail=f"Unsupported MODERATION_PROVIDER '{settings.MODERATION_PROVIDER}'.")
-
-    if generation is embedding is safety:
-        return generation
-    return CompositeProvider(generation, embedding, safety)
 
 # Application lifespan events
 @asynccontextmanager
@@ -127,7 +65,13 @@ async def lifespan(app: FastAPI):
             max_interactive=settings.OLLAMA_MAX_INTERACTIVE_REQUESTS,
             max_background=settings.OLLAMA_MAX_BACKGROUND_REQUESTS,
         )
-        app.state.llm_service = _build_active_provider(app.state.model_execution_scheduler)
+        app.state.llm_service = build_active_provider(app.state.model_execution_scheduler)
+        app.state.synthesis_provider = build_synthesis_provider(
+            app.state.model_execution_scheduler, app.state.llm_service
+        )
+        enforce_local_only(
+            cognitive=app.state.llm_service, synthesis=app.state.synthesis_provider
+        )
         app.state.llm_provider = app.state.llm_service.capabilities
         app.state.ollama_status = await app.state.ollama_probe.probe()
         # Resolve the vector dimension before any collection is stamped with this identity.
@@ -344,9 +288,14 @@ async def lifespan(app: FastAPI):
             memory_service=app.state.memory_service,
             self_model_service=app.state.self_model_service,
             working_memory_buffer=app.state.working_memory_buffer,
-            theory_of_mind_service=app.state.theory_of_mind_service
+            theory_of_mind_service=app.state.theory_of_mind_service,
+            synthesis_provider=app.state.synthesis_provider
         )
-        logger.info("CognitiveBrain initialized successfully with SelfModel, WorkingMemory, and TheoryOfMind.")
+        logger.info(
+            "CognitiveBrain initialized; final synthesis on %s (%s).",
+            app.state.synthesis_provider.capabilities.provider,
+            app.state.synthesis_provider.capabilities.model,
+        )
 
         # Initialize OrchestrationService (Central Agent) with all Brain Architecture services
         # Recreate ConflictMonitor with RL service injected for strategy learning
@@ -1549,11 +1498,16 @@ async def deep_health_check_endpoint(request_obj: Request):
     try:
         capabilities = request_obj.app.state.llm_provider
         identity = request_obj.app.state.embedding_identity
+        synthesis = request_obj.app.state.synthesis_provider.capabilities
         health_status["components"]["active_provider"] = {
             "status": "healthy",
             "provider": capabilities.provider,
             "model": capabilities.model,
             "is_local": capabilities.is_local,
+            "synthesis_provider": synthesis.provider,
+            "synthesis_model": synthesis.model,
+            "synthesis_is_local": synthesis.is_local,
+            "local_only_mode": settings.LOCAL_ONLY_MODE,
             "embedding_identity": identity.describe(),
             "embedding_provider": identity.provider,
             "embedding_model": identity.model,

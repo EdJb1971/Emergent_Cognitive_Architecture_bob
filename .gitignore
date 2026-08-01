@@ -51,6 +51,8 @@ htmlcov/
 logs/
 *.log
 *.pid
+server*.err
+server*.out
 
 # Data stores & checkpoints
 chroma_db/
@@ -10115,3 +10117,4 @@ chroma_db/73bf20d8-a800-4c98-875a-8976ca28ff83/length.bin
 chroma_db/eb607907-3308-4f53-bada-94c8cf5df6af/length.bin
 src/agents/__pycache__/utils.cpython-311.pyc
 src/core/__pycache__/config.cpython-311.pyc
+server2.err

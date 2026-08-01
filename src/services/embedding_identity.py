@@ -14,8 +14,6 @@ from src.providers.base import (
 
 logger = logging.getLogger(__name__)
 
-LEGACY_IDENTITY = EmbeddingModelIdentity(provider="gemini", model="models/embedding-001")
-
 
 def resolve_embedding_identity(llm_service: Any) -> Optional[EmbeddingModelIdentity]:
     """Read the active embedding identity from whichever provider is wired in."""
@@ -49,31 +47,28 @@ def apply_embedding_identity(
     stored = read_collection_identity(stored_metadata)
 
     if stored is None:
-        if _collection_is_empty(collection):
-            metadata = {
-                key: value
-                for key, value in identity.as_collection_metadata().items()
-                if value is not None
-            }
-            merged = {**(stored_metadata or {}), **metadata}
-            try:
-                collection.modify(metadata=merged)
-            except Exception as error:
-                logger.warning("Could not stamp embedding identity on '%s': %s", name, error)
-                return
-            logger.info("Stamped collection '%s' with embedding identity %s.", name, identity.describe())
+        if not _collection_is_empty(collection):
+            message = (
+                f"Collection '{name}' holds vectors but carries no embedding identity, so the "
+                f"model that produced them is unknown."
+            )
+            if enforced:
+                raise EmbeddingIdentityMismatch(name, "unknown", identity.describe())
+            logger.warning("%s Continuing because identity enforcement is disabled.", message)
             return
 
-        mismatch = check_embedding_identity(name, LEGACY_IDENTITY.as_collection_metadata(), identity)
-        if mismatch is None:
+        metadata = {
+            key: value
+            for key, value in identity.as_collection_metadata().items()
+            if value is not None
+        }
+        merged = {**(stored_metadata or {}), **metadata}
+        try:
+            collection.modify(metadata=merged)
+        except Exception as error:
+            logger.warning("Could not stamp embedding identity on '%s': %s", name, error)
             return
-        message = (
-            f"Collection '{name}' predates embedding identity tracking and is assumed to hold "
-            f"{LEGACY_IDENTITY.describe()} vectors, but the active provider is {identity.describe()}."
-        )
-        if enforced:
-            raise EmbeddingIdentityMismatch(name, LEGACY_IDENTITY.describe(), identity.describe())
-        logger.warning("%s Continuing because identity enforcement is disabled.", message)
+        logger.info("Stamped collection '%s' with embedding identity %s.", name, identity.describe())
         return
 
     mismatch = check_embedding_identity(name, stored_metadata, identity)

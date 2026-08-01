@@ -31,9 +31,11 @@ class CognitiveBrain:
         memory_service: MemoryService,
         self_model_service: Optional[Any] = None,
         working_memory_buffer: Optional[Any] = None,
-        theory_of_mind_service: Optional[Any] = None
+        theory_of_mind_service: Optional[Any] = None,
+        synthesis_provider: Optional[Any] = None
     ):
         self.llm_service = llm_service
+        self.synthesis_provider = synthesis_provider or llm_service
         self.memory_service = memory_service
         self.self_model_service = self_model_service
         self.working_memory_buffer = working_memory_buffer
@@ -229,11 +231,11 @@ Agent Analyses:
 
         try:
             # Generate LLM response
-            llm_response_str = await self.llm_service.generate_text(
+            llm_response_str = await self.synthesis_provider.generate_text(
                 prompt=prompt,
-                model_name=self.MODEL_NAME,
                 temperature=0.7,  # Balanced temperature for conversational and analytical output
-                max_output_tokens=1500
+                max_output_tokens=1500,
+                response_json=True
             )
             
             logger.info(f"CognitiveBrain: Raw LLM response for cycle {cognitive_cycle.cycle_id}:\n{llm_response_str[:500]}...")
@@ -292,11 +294,11 @@ Agent Analyses:
                         Context (for reference):
                         {context_for_llm}
                         """
-                        llm_response_str_2 = await self.llm_service.generate_text(
+                        llm_response_str_2 = await self.synthesis_provider.generate_text(
                             prompt=regen_prompt,
-                            model_name=self.MODEL_NAME,
                             temperature=0.6,
                             max_output_tokens=900,
+                            response_json=True,
                         )
                         response_data_2 = extract_json_from_response(llm_response_str_2)
                         final_response = response_data_2.get("final_response", final_response)

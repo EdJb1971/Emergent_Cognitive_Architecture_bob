@@ -164,7 +164,8 @@ class LLMIntegrationService:
         audio_base64: Optional[str] = None,
         # SEC-001: Added explicit mime_type arguments
         image_mime_type: Optional[str] = "image/jpeg", 
-        audio_mime_type: Optional[str] = "audio/wav"
+        audio_mime_type: Optional[str] = "audio/wav",
+        response_json: bool = False
     ) -> str:
         """
         Generates text using a specified Google Gemini model, supporting multimodal input.
@@ -200,6 +201,8 @@ class LLMIntegrationService:
                 "max_output_tokens": max_output_tokens,
                 "stop_sequences": stop_sequences if stop_sequences else []
             }
+            if response_json:
+                generation_config["response_mime_type"] = "application/json"
             # Default safety settings if not provided
             if safety_settings is None:
                 safety_settings = [

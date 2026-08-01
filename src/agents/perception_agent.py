@@ -103,9 +103,9 @@ class PerceptionAgent:
                 prompt=prompt,
                 image_base64=image_base64,
                 audio_base64=audio_base64,
-                model_name=self.MODEL_NAME,
                 temperature=0.3, # Lower temperature for more focused analysis
-                max_output_tokens=500
+                max_output_tokens=500,
+                response_json=True,
             )            
             # Attempt to parse the JSON response
             analysis_data = extract_json_from_response(llm_response_str)

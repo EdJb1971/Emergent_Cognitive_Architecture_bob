@@ -88,9 +88,9 @@ class CreativeAgent:
         try:
             llm_response_str = await self.llm_service.generate_text(
                 prompt=prompt,
-                model_name=self.MODEL_NAME,
                 temperature=0.8, # Higher temperature for more creative outputs
-                max_output_tokens=1200  # Increased to avoid truncation
+                max_output_tokens=1200,  # Increased to avoid truncation
+                response_json=True,
             )
             
             analysis_data = extract_json_from_response(llm_response_str)

@@ -21,7 +21,6 @@ class SelfReflectionAndDiscoveryEngine:
     """
     REFLECTION_MODEL_NAME = settings.LLM_MODEL_NAME
     DISCOVERY_MODEL_NAME = settings.LLM_MODEL_NAME
-    EMBEDDING_MODEL_NAME = settings.EMBEDDING_MODEL_NAME
 
     def __init__(
         self, 
@@ -39,7 +38,7 @@ class SelfReflectionAndDiscoveryEngine:
         Generates an embedding for a given text using the LLM service.
         """
         try:
-            return await self.llm_service.generate_embedding(text=text, model_name=self.EMBEDDING_MODEL_NAME)
+            return await self.llm_service.generate_embedding(text=text)
         except LLMServiceException as e:
             logger.error(f"Failed to generate embedding for pattern: {e.detail}", exc_info=True)
             return []

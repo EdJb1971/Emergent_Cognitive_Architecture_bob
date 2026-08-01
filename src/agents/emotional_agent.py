@@ -72,9 +72,9 @@ class EmotionalAgent:
         try:
             llm_response_str = await self.llm_service.generate_text(
                 prompt=prompt,
-                model_name=self.MODEL_NAME,
                 temperature=0.5,  # Moderate temperature for nuanced emotional detection
-                max_output_tokens=500
+                max_output_tokens=500,
+                response_json=True,
             )
             
             analysis_data = extract_json_from_response(llm_response_str)

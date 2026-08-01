@@ -31,6 +31,7 @@ class ProviderRequest:
     model: Optional[str] = None
     required_capabilities: tuple[str, ...] = ()
     structured_output_schema: Optional[Dict[str, Any]] = None
+    response_json: bool = False
     privacy_classification: str = "local"
     context_budget: Optional[int] = None
     timeout_seconds: float = 90.0
@@ -130,6 +131,7 @@ class LLMProvider(Protocol):
         audio_base64: Optional[str] = None,
         image_mime_type: Optional[str] = "image/jpeg",
         audio_mime_type: Optional[str] = "audio/wav",
+        response_json: bool = False,
     ) -> str: ...
 
     async def generate_embedding(
@@ -152,5 +154,7 @@ class EmbeddingProvider(Protocol):
     identity: EmbeddingModelIdentity
 
     async def embed(self, text: str) -> List[float]: ...
+
+    async def embed_batch(self, texts: List[str]) -> List[List[float]]: ...
 
     async def verify(self) -> EmbeddingModelIdentity: ...

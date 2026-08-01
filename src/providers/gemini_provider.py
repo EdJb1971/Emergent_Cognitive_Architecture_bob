@@ -10,12 +10,13 @@ from src.services.llm_integration_service import LLMIntegrationService
 class GeminiProvider:
     """Compatibility adapter that preserves the current Gemini runtime behavior."""
 
-    def __init__(self, service: Optional[LLMIntegrationService] = None):
+    def __init__(self, service: Optional[LLMIntegrationService] = None, model: Optional[str] = None):
         self._service = service or LLMIntegrationService()
+        self._model = model or settings.LLM_MODEL_NAME
         self._vector_dimension: Optional[int] = None
         self.capabilities = ProviderCapabilities(
             provider="gemini",
-            model=settings.LLM_MODEL_NAME,
+            model=self._model,
             is_local=False,
             supports_images=True,
             supports_audio=True,
@@ -35,10 +36,11 @@ class GeminiProvider:
         audio_base64: Optional[str] = None,
         image_mime_type: Optional[str] = "image/jpeg",
         audio_mime_type: Optional[str] = "audio/wav",
+        response_json: bool = False,
     ) -> str:
         return await self._service.generate_text(
             prompt=prompt,
-            model_name=model_name or settings.LLM_MODEL_NAME,
+            model_name=model_name or self._model,
             temperature=temperature,
             max_output_tokens=max_output_tokens,
             stop_sequences=stop_sequences,
@@ -47,6 +49,7 @@ class GeminiProvider:
             audio_base64=audio_base64,
             image_mime_type=image_mime_type,
             audio_mime_type=audio_mime_type,
+            response_json=response_json,
         )
 
     async def generate_embedding(
@@ -62,6 +65,10 @@ class GeminiProvider:
 
     async def embed(self, text: str) -> List[float]:
         return await self.generate_embedding(text)
+
+    async def embed_batch(self, texts: List[str]) -> List[List[float]]:
+        # The Gemini client exposes no batch endpoint here; callers still get one call per text.
+        return [await self.generate_embedding(text) for text in texts]
 
     @property
     def identity(self) -> EmbeddingModelIdentity:

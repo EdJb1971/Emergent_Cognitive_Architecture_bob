@@ -44,6 +44,12 @@ class CompositeProvider:
     def identity(self) -> EmbeddingModelIdentity:
         return self.embedding_provider.identity
 
+    async def embed(self, text: str) -> List[float]:
+        return await self.embedding_provider.embed(text)
+
+    async def embed_batch(self, texts: List[str]) -> List[List[float]]:
+        return await self.embedding_provider.embed_batch(texts)
+
     async def verify(self) -> EmbeddingModelIdentity:
         return await self.embedding_provider.verify()
 
@@ -59,6 +65,7 @@ class CompositeProvider:
         audio_base64: Optional[str] = None,
         image_mime_type: Optional[str] = "image/jpeg",
         audio_mime_type: Optional[str] = "audio/wav",
+        response_json: bool = False,
     ) -> str:
         return await self.generation_provider.generate_text(
             prompt=prompt,
@@ -71,6 +78,7 @@ class CompositeProvider:
             audio_base64=audio_base64,
             image_mime_type=image_mime_type,
             audio_mime_type=audio_mime_type,
+            response_json=response_json,
         )
 
     async def generate_embedding(

@@ -87,9 +87,9 @@ class PlanningAgent:
         try:
             llm_response_str = await self.llm_service.generate_text(
                 prompt=prompt,
-                model_name=self.MODEL_NAME,
                 temperature=0.4, # Moderate temperature for balanced planning
-                max_output_tokens=700
+                max_output_tokens=700,
+                response_json=True,
             )
             
             analysis_data = extract_json_from_response(llm_response_str)

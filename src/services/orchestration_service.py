@@ -36,8 +36,18 @@ from src.services.emotional_memory_service import EmotionalMemoryService
 from src.services.meta_cognitive_monitor import MetaCognitiveMonitor, ActionRecommendation, GapType
 from src.services.procedural_learning_service import ProceduralLearningService, SkillCategory
 from src.services.metrics_service import MetricsService, MetricType
+from src.utils.stage_timer import StageTimer
 
 logger = logging.getLogger(__name__)
+
+
+async def _run_timed(agent_id: str, coro, sink: Dict[str, float]):
+    """Await an agent coroutine, recording its own wall-clock cost into ``sink``."""
+    start = time.perf_counter()
+    try:
+        return await coro
+    finally:
+        sink[agent_id] = (time.perf_counter() - start) * 1000.0
 
 class OrchestrationService:
     """
@@ -116,15 +126,17 @@ class OrchestrationService:
             APIException: If a critical error occurs during orchestration.
         """
         logger.info(f"Orchestrating cognitive cycle for user {user_request.user_id}, session {user_request.session_id}")
+        timer = StageTimer()
 
         # If audio present, attempt transcription first so everyone can use the text
         effective_input_text = user_request.input_text or ""
         audio_analysis_dict: Optional[Dict[str, Any]] = None
         if user_request.audio_base64 and self.audio_input_processor:
             try:
-                audio_analysis: AudioAnalysis = await self.audio_input_processor.process_audio(
-                    audio_base64=user_request.audio_base64
-                )
+                with timer.stage("audio_transcription"):
+                    audio_analysis: AudioAnalysis = await self.audio_input_processor.process_audio(
+                        audio_base64=user_request.audio_base64
+                    )
                 audio_analysis_dict = audio_analysis.model_dump()
                 if audio_analysis.transcription:
                     if effective_input_text:
@@ -172,7 +184,8 @@ class OrchestrationService:
         pre_interaction_profile = None
         if self.emotional_memory_service:
             try:
-                pre_interaction_profile = await self.emotional_memory_service.get_or_create_profile(user_request.user_id)
+                with timer.stage("emotional_profile_load"):
+                    pre_interaction_profile = await self.emotional_memory_service.get_or_create_profile(user_request.user_id)
                 cognitive_cycle.metadata["pre_interaction_trust"] = pre_interaction_profile.trust_level
                 cognitive_cycle.metadata["pre_interaction_sentiment"] = pre_interaction_profile.last_emotion_detected
                 logger.debug(f"Pre-interaction emotional state captured: trust={pre_interaction_profile.trust_level:.2f}, sentiment={pre_interaction_profile.last_emotion_detected}")
@@ -181,17 +194,19 @@ class OrchestrationService:
 
         # --- Pre-Processing: Thalamus Gateway (Selective Attention) ---
         logger.info(f"Cycle {cognitive_cycle.cycle_id}: Thalamus Gateway - Analyzing input for selective agent activation")
-        input_routing = await self.thalamus_gateway.route_input(
-            user_input=effective_input_text,
-            user_id=str(user_request.user_id),
-            has_image=user_request.image_base64 is not None,
-            has_audio=user_request.audio_base64 is not None
-        )
+        with timer.stage("thalamus_routing"):
+            input_routing = await self.thalamus_gateway.route_input(
+                user_input=effective_input_text,
+                user_id=str(user_request.user_id),
+                has_image=user_request.image_base64 is not None,
+                has_audio=user_request.audio_base64 is not None
+            )
         logger.debug(f"Cycle {cognitive_cycle.cycle_id}: Input routing - {input_routing.quick_analysis}")
         logger.debug(f"Cycle {cognitive_cycle.cycle_id}: Agent activation map - {input_routing.agent_activation}")
 
         attention_directives = []
         if self.attention_controller:
+            _attention_start = time.perf_counter()
             working_memory_snapshot = None
             if getattr(self.working_memory_buffer, "context", None):
                 working_memory_snapshot = self.working_memory_buffer.context.model_dump(mode="json")
@@ -204,6 +219,7 @@ class OrchestrationService:
                  stage="pre_stage1",
                  update_last_context=False,
             )
+            timer.record("attention_pre_stage1", (time.perf_counter() - _attention_start) * 1000.0)
             attention_directive_dump = attention_directive.model_dump(mode="json")
             attention_directives.append(attention_directive_dump)
             directive_applied = False
@@ -322,39 +338,44 @@ class OrchestrationService:
                 user_id=str(user_request.user_id)
             )
         
-        stage1_results = await asyncio.gather(*[task for _, task in stage1_agents_and_tasks], return_exceptions=True)
+        agent_durations: Dict[str, float] = {}
+        with timer.stage("stage1_agents"):
+            stage1_results = await asyncio.gather(
+                *[_run_timed(agent.AGENT_ID, task, agent_durations) for agent, task in stage1_agents_and_tasks],
+                return_exceptions=True
+            )
 
         # Process Stage 1 results
         stage1_outputs = []
         for (agent_instance, _), result in zip(stage1_agents_and_tasks, stage1_results):
             # This logic is duplicated for both stages. Consider refactoring to a helper method.
             agent_id = agent_instance.AGENT_ID
-            start_time = time.perf_counter()
+            duration = agent_durations.get(agent_id, 0.0)
             if isinstance(result, AgentOutput):
                 stage1_outputs.append(result)
                 cognitive_cycle.agent_outputs.append(result)
                 logger.debug(f"Orchestration: Stage 1 agent {agent_id} completed successfully.")
-                end_time = time.perf_counter()
-                duration = (end_time - start_time) * 1000
                 logger.info(f"AGENT_METRIC: {agent_id} | Cycle: {cognitive_cycle.cycle_id} | User: {user_request.user_id} | Status: success | Duration: {duration:.2f}ms | Confidence: {result.confidence}",
                             extra={"agent_id": agent_id, "cycle_id": str(cognitive_cycle.cycle_id), "user_id": str(user_request.user_id), "status": "success", "duration_ms": duration, "confidence": result.confidence})
             elif isinstance(result, Exception):
                 logger.error(f"Orchestration: Stage 1 agent {agent_id} failed: {result}", exc_info=True)
                 error_detail = str(result.detail) if isinstance(result, AgentServiceException) else str(result)
                 cognitive_cycle.agent_outputs.append(AgentOutput(agent_id=agent_id, analysis={"error": error_detail, "status": "failed"}, confidence=0.0, priority=1, raw_output=f"Error: {error_detail}"))
-                end_time = time.perf_counter()
-                duration = (end_time - start_time) * 1000
                 logger.error(f"AGENT_METRIC: {agent_id} | Cycle: {cognitive_cycle.cycle_id} | User: {user_request.user_id} | Status: failed | Duration: {duration:.2f}ms | Error: {error_detail}",
                              extra={"agent_id": agent_id, "cycle_id": str(cognitive_cycle.cycle_id), "user_id": str(user_request.user_id), "status": "failed", "duration_ms": duration, "error": error_detail})
 
         # --- Working Memory Update: Extract insights from Stage 1 ---
+        cognitive_cycle.metadata.setdefault("agent_timings_ms", {}).update(
+            {k: round(v, 1) for k, v in agent_durations.items()}
+        )
         logger.info(f"Cycle {cognitive_cycle.cycle_id}: Updating Working Memory from Stage 1 outputs")
         self.working_memory_buffer.reset()
         self.working_memory_buffer.update_from_stage1(stage1_outputs, effective_input_text)
         
         # --- Stage 1.5: Conflict Detection ---
         logger.info(f"Cycle {cognitive_cycle.cycle_id}: Conflict Monitor - Checking Stage 1 for inconsistencies")
-        stage1_conflict_report = await self.conflict_monitor.detect_conflicts(stage1_outputs)
+        with timer.stage("conflict_stage1"):
+            stage1_conflict_report = await self.conflict_monitor.detect_conflicts(stage1_outputs)
         cognitive_cycle.metadata["stage1_conflicts"] = {
             "conflicts": [c.model_dump(mode='json') for c in stage1_conflict_report.conflicts],
             "requires_adjustment": stage1_conflict_report.requires_adjustment,
@@ -384,6 +405,7 @@ class OrchestrationService:
 
         # Post-Stage1 attention update with drift detection
         if self.attention_controller:
+            _attention_start = time.perf_counter()
             working_memory_snapshot = self.working_memory_buffer.context.model_dump(mode="json")
             post_stage_directive = await self.attention_controller.generate_directive(
                 quick_analysis=input_routing.quick_analysis,
@@ -394,6 +416,7 @@ class OrchestrationService:
                 stage="post_stage1",
                 update_last_context=True,
             )
+            timer.record("attention_post_stage1", (time.perf_counter() - _attention_start) * 1000.0)
             directive_dump = post_stage_directive.model_dump(mode="json")
             attention_directives.append(directive_dump)
             motifs = self._derive_attention_motifs(working_memory_snapshot, post_stage_directive)
@@ -515,32 +538,37 @@ class OrchestrationService:
                 user_id=str(user_request.user_id)
             )
         
-        stage2_results = await asyncio.gather(*[task for _, task in stage2_agents_and_tasks], return_exceptions=True)
+        agent_durations.clear()
+        with timer.stage("stage2_agents"):
+            stage2_results = await asyncio.gather(
+                *[_run_timed(agent.AGENT_ID, task, agent_durations) for agent, task in stage2_agents_and_tasks],
+                return_exceptions=True
+            )
 
         # Process Stage 2 results
         for (agent_instance, _), result in zip(stage2_agents_and_tasks, stage2_results):
             agent_id = agent_instance.AGENT_ID
-            start_time = time.perf_counter()
+            duration = agent_durations.get(agent_id, 0.0)
             if isinstance(result, AgentOutput):
                 cognitive_cycle.agent_outputs.append(result)
                 logger.debug(f"Orchestration: Stage 2 agent {agent_id} completed successfully.")
-                end_time = time.perf_counter()
-                duration = (end_time - start_time) * 1000
                 logger.info(f"AGENT_METRIC: {agent_id} | Cycle: {cognitive_cycle.cycle_id} | User: {user_request.user_id} | Status: success | Duration: {duration:.2f}ms | Confidence: {result.confidence}",
                             extra={"agent_id": agent_id, "cycle_id": str(cognitive_cycle.cycle_id), "user_id": str(user_request.user_id), "status": "success", "duration_ms": duration, "confidence": result.confidence})
             elif isinstance(result, Exception):
                 logger.error(f"Orchestration: Stage 2 agent {agent_id} failed: {result}", exc_info=True)
                 error_detail = str(result.detail) if isinstance(result, AgentServiceException) else str(result)
                 cognitive_cycle.agent_outputs.append(AgentOutput(agent_id=agent_id, analysis={"error": error_detail, "status": "failed"}, confidence=0.0, priority=1, raw_output=f"Error: {error_detail}"))
-                end_time = time.perf_counter()
-                duration = (end_time - start_time) * 1000
                 logger.error(f"AGENT_METRIC: {agent_id} | Cycle: {cognitive_cycle.cycle_id} | User: {user_request.user_id} | Status: failed | Duration: {duration:.2f}ms | Error: {error_detail}",
                              extra={"agent_id": agent_id, "cycle_id": str(cognitive_cycle.cycle_id), "user_id": str(user_request.user_id), "status": "failed", "duration_ms": duration, "error": error_detail})
 
         # --- Stage 2.5: Final Conflict Check ---
+        cognitive_cycle.metadata.setdefault("agent_timings_ms", {}).update(
+            {k: round(v, 1) for k, v in agent_durations.items()}
+        )
         logger.info(f"Cycle {cognitive_cycle.cycle_id}: Conflict Monitor - Final coherence check")
         all_outputs = cognitive_cycle.agent_outputs
-        final_conflict_report = await self.conflict_monitor.detect_conflicts(all_outputs)
+        with timer.stage("conflict_final"):
+            final_conflict_report = await self.conflict_monitor.detect_conflicts(all_outputs)
         cognitive_cycle.metadata["final_conflicts"] = {
             "conflicts": [c.model_dump(mode='json') for c in final_conflict_report.conflicts],
             "requires_adjustment": final_conflict_report.requires_adjustment,
@@ -642,6 +670,7 @@ class OrchestrationService:
         # --- Step 1.75: Meta-Cognitive Assessment (Pre-Response Gate) ---
         meta_cognitive_override = None
         if self.meta_cognitive_monitor:
+            _meta_start = time.perf_counter()
             try:
                 recommendation, gap_type, confidence_score, explanation = await self.meta_cognitive_monitor.assess_answer_appropriateness(
                     query=effective_input_text,
@@ -680,8 +709,11 @@ class OrchestrationService:
 
             except Exception as e:
                 logger.warning(f"Meta-cognitive assessment failed: {e}")
+            finally:
+                timer.record("meta_cognitive", (time.perf_counter() - _meta_start) * 1000.0)
 
         # --- Step 2: Generate final response using Cognitive Brain ---
+        _brain_start = time.perf_counter()
         try:
             # Use meta-cognitive override if set
             if meta_cognitive_override:
@@ -713,17 +745,21 @@ class OrchestrationService:
             cognitive_cycle.final_response = "An unexpected error prevented response generation."
             cognitive_cycle.response_metadata = ResponseMetadata(response_type="error", tone="neutral", strategies=["error_handling"], cognitive_moves=["inform_user"])
             cognitive_cycle.outcome_signals = OutcomeSignals(user_satisfaction_potential=0.0, engagement_potential=0.0)
-        
+        finally:
+            timer.record("cognitive_brain_synthesis", (time.perf_counter() - _brain_start) * 1000.0)
+
         # --- Step 2.5: Update SelfModel (autobiographical memory) ---
         if hasattr(self, 'self_model_service') and self.cognitive_brain.self_model_service:
             try:
-                await self.cognitive_brain.self_model_service.update_from_cycle(cognitive_cycle)
+                with timer.stage("self_model_update"):
+                    await self.cognitive_brain.self_model_service.update_from_cycle(cognitive_cycle)
                 logger.debug(f"Updated self-model for user {user_request.user_id}")
             except Exception as e:
                 logger.warning(f"Failed to update self-model: {e}")
         
         # --- Step 2.6: Procedural Learning - Track Skill Performance ---
         if self.procedural_learning_service:
+            _procedural_start = time.perf_counter()
             try:
                 # Track performance for key skills used in this cycle
                 skill_categories = []
@@ -801,7 +837,7 @@ class OrchestrationService:
                 
                 # Generate error analysis from ConflictMonitor for low coherence cycles
                 if final_conflict_report.coherence_score < 0.5:
-                    conflict_error_analysis = await self.conflict_monitor.generate_error_analysis(
+                    conflict_error_analysis = self.conflict_monitor.generate_error_analysis(
                         cycle_id=cognitive_cycle.cycle_id,
                         agent_outputs=cognitive_cycle.agent_outputs,
                         coherence_score=final_conflict_report.coherence_score,
@@ -819,7 +855,7 @@ class OrchestrationService:
                     gap_type = GapType(assessment["gap_type"])
                     confidence_score = assessment["confidence_score"]
                     
-                    meta_cognitive_error_analysis = await self.meta_cognitive_monitor.generate_error_analysis(
+                    meta_cognitive_error_analysis = self.meta_cognitive_monitor.generate_error_analysis(
                         cycle_id=cognitive_cycle.cycle_id,
                         recommendation=recommendation,
                         gap_type=gap_type,
@@ -858,11 +894,14 @@ class OrchestrationService:
                 
             except Exception as e:
                 logger.warning(f"Procedural learning tracking failed: {e}")
+            finally:
+                timer.record("procedural_learning", (time.perf_counter() - _procedural_start) * 1000.0)
         
         # --- Step 2.75: Contextual Memory Encoding ---
         logger.info(f"Cycle {cognitive_cycle.cycle_id}: Contextual Memory Encoder - Enriching with contextual bindings")
         try:
-            cognitive_cycle = await self.contextual_memory_encoder.encode_cycle(cognitive_cycle, self.session_start)
+            with timer.stage("contextual_encoding"):
+                cognitive_cycle = await self.contextual_memory_encoder.encode_cycle(cognitive_cycle, self.session_start)
             consolidation_priority = cognitive_cycle.metadata.get("consolidation_metadata", {}).get("consolidation_priority", 0.5)
             logger.debug(f"Cycle {cognitive_cycle.cycle_id}: Consolidation priority = {consolidation_priority:.2f}")
         except Exception as e:
@@ -870,7 +909,8 @@ class OrchestrationService:
         
         # --- Step 3: Store complete cognitive cycle in Memory Service ---
         try:
-            await self.memory_service.upsert_cycle(cognitive_cycle)
+            with timer.stage("memory_upsert"):
+                await self.memory_service.upsert_cycle(cognitive_cycle)
             logger.info(f"Cognitive cycle {cognitive_cycle.cycle_id} successfully stored in Memory Service.")
         except APIException as e:
             logger.error(f"Orchestration: Failed to store cognitive cycle {cognitive_cycle.cycle_id} in Memory Service: {e.detail}", exc_info=True)
@@ -880,6 +920,7 @@ class OrchestrationService:
         
         # --- Step 3.5: Theory of Mind Validation ---
         if self.cognitive_brain.theory_of_mind_service:
+            _tom_start = time.perf_counter()
             try:
                 # Get previous cycle for comparison
                 previous_cycle = None
@@ -908,9 +949,12 @@ class OrchestrationService:
                 
             except Exception as e:
                 logger.warning(f"Failed to validate theory of mind predictions: {e}")
+            finally:
+                timer.record("theory_of_mind", (time.perf_counter() - _tom_start) * 1000.0)
 
         # --- RL Reward Update (Using composite reward signals from multiple sources) ---
         if self.rl_service and cognitive_cycle.metadata.get("rl_strategy_guidance") and cognitive_cycle.outcome_signals:
+            _rl_start = time.perf_counter()
             # Compute composite reward from multiple emotional and behavioral signals
             composite_reward = await self._compute_composite_reward(
                 user_request.user_id,
@@ -935,6 +979,19 @@ class OrchestrationService:
                 except Exception as e:
                     logger.warning(f"RL reward update failed for context {guidance.get('rl_context')}: {e}")
 
+            timer.record("rl_reward_update", (time.perf_counter() - _rl_start) * 1000.0)
+
+        stage_timings = timer.as_dict()
+        cognitive_cycle.metadata["stage_timings_ms"] = stage_timings
+        logger.info(
+            f"CYCLE_TIMING: {cognitive_cycle.cycle_id} | {timer.summary()}",
+            extra={
+                "cycle_id": str(cognitive_cycle.cycle_id),
+                "user_id": str(user_request.user_id),
+                "stage_timings_ms": stage_timings,
+            },
+        )
+
         # Record cognitive cycle completion metric
         if self.metrics_service:
             await self.metrics_service.record_metric(
@@ -947,7 +1004,8 @@ class OrchestrationService:
                     "response_length": len(cognitive_cycle.final_response) if cognitive_cycle.final_response else 0,
                     "user_satisfaction": cognitive_cycle.outcome_signals.user_satisfaction_potential if cognitive_cycle.outcome_signals else None,
                     "processing_time": (datetime.utcnow() - cognitive_cycle.timestamp).total_seconds(),
-                    "conflict_count": len(cognitive_cycle.metadata.get("final_conflicts", {}).get("conflicts", []))
+                    "conflict_count": len(cognitive_cycle.metadata.get("final_conflicts", {}).get("conflicts", [])),
+                    "stage_timings_ms": stage_timings
                 },
                 cycle_id=str(cognitive_cycle.cycle_id),
                 user_id=str(user_request.user_id)

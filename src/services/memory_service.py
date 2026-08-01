@@ -128,9 +128,10 @@ class MemoryService:
                         is_persistent=True
                     )
                 )
+                # Vectors are always supplied by the active provider; Chroma must not embed anything itself.
                 self.cycles_collection = self.client.get_or_create_collection(
                     name=settings.CHROMA_COLLECTION_CYCLES,
-                    embedding_function=embedding_functions.DefaultEmbeddingFunction()
+                    embedding_function=None
                 )
                 apply_embedding_identity(
                     self.cycles_collection,
@@ -212,15 +213,13 @@ class MemoryService:
                 if getattr(cognitive_cycle, 'user_input', None) and not getattr(cognitive_cycle, 'user_input_embedding', None):
                     logger.info(f"Computing user_input_embedding for cycle {cognitive_cycle.cycle_id}")
                     cognitive_cycle.user_input_embedding = await self.llm_service.generate_embedding(
-                        text=cognitive_cycle.user_input,
-                        model_name=settings.EMBEDDING_MODEL_NAME
+                        text=cognitive_cycle.user_input
                     )
                     logger.info(f"Generated user_input_embedding with {len(cognitive_cycle.user_input_embedding)} dimensions")
                 if getattr(cognitive_cycle, 'final_response', None) and not getattr(cognitive_cycle, 'final_response_embedding', None):
                     logger.info(f"Computing final_response_embedding for cycle {cognitive_cycle.cycle_id}")
                     cognitive_cycle.final_response_embedding = await self.llm_service.generate_embedding(
-                        text=cognitive_cycle.final_response,
-                        model_name=settings.EMBEDDING_MODEL_NAME
+                        text=cognitive_cycle.final_response
                     )
                     logger.info(f"Generated final_response_embedding with {len(cognitive_cycle.final_response_embedding)} dimensions")
             except Exception as e:
@@ -406,8 +405,7 @@ class MemoryService:
         try:
             # Compute query embedding once (used for both STM and LTM)
             query_embedding = query_request.query_embedding or await self.llm_service.generate_embedding(
-                text=query_request.query_text,
-                model_name=settings.EMBEDDING_MODEL_NAME
+                text=query_request.query_text
             )
 
             # Check STM first (embedding-based similarity when available)
@@ -578,8 +576,7 @@ class MemoryService:
             # Prepare embedding text and embedding
             embed_text = self._get_cycle_embedding_text(cycle)
             embedding = await self.llm_service.generate_embedding(
-                text=embed_text,
-                model_name=settings.EMBEDDING_MODEL_NAME
+                text=embed_text
             )
 
             # Serialize cycle
@@ -809,8 +806,7 @@ class MemoryService:
             if not embedding:
                 try:
                     embedding = await self.llm_service.generate_embedding(
-                        text=pattern.description,
-                        model_name=settings.EMBEDDING_MODEL_NAME
+                        text=pattern.description
                     )
                     pattern.embedding = embedding
                 except Exception:

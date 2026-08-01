@@ -48,7 +48,7 @@ class SummaryManager:
             
             self.summaries_collection = self.client.get_or_create_collection(
                 name="conversation_summaries",
-                embedding_function=embedding_functions.DefaultEmbeddingFunction()
+                embedding_function=None
             )
             apply_embedding_identity(
                 self.summaries_collection,
@@ -183,8 +183,7 @@ class SummaryManager:
             # Generate new embedding
             summary_text = self._generate_summary_text(summary)
             summary.embedding = await self.llm_service.generate_embedding(
-                text=summary_text,
-                model_name=settings.EMBEDDING_MODEL_NAME
+                text=summary_text
             )
 
             # Store updated summary
@@ -540,8 +539,7 @@ class SummaryManager:
             # Generate embedding for the consolidated STM record
             stm_text = self._generate_stm_text(summary, consolidation)
             stm_embedding = await self.llm_service.generate_embedding(
-                text=stm_text,
-                model_name=settings.EMBEDDING_MODEL_NAME
+                text=stm_text
             )
             
             # Store consolidated STM record
@@ -549,8 +547,7 @@ class SummaryManager:
             
             # Update and store summary
             summary.embedding = await self.llm_service.generate_embedding(
-                text=self._generate_summary_text(summary),
-                model_name=settings.EMBEDDING_MODEL_NAME
+                text=self._generate_summary_text(summary)
             )
             await self._store_summary(summary)
             
@@ -610,8 +607,7 @@ class SummaryManager:
 
         try:
             query_embedding = await self.llm_service.generate_embedding(
-                text=query_text,
-                model_name=settings.EMBEDDING_MODEL_NAME
+                text=query_text
             )
 
             results = self.summaries_collection.query(

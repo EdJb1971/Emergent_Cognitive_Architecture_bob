@@ -1,12 +1,13 @@
 """
 Token counting utility for memory management and LLM interactions.
-Provides accurate token counts for Gemini and fallback counting methods.
+
+Counting is local and provider-neutral. A remote tokenizer would put a network
+round-trip in the hot path of every memory operation and tie STM budgets to one
+vendor; token budgets are heuristics, so a local estimate is the better trade.
 """
 import logging
 from typing import Dict, Optional, Union
 from functools import lru_cache
-import google.generativeai as genai
-from tenacity import retry, stop_after_attempt, wait_exponential
 
 from src.core.config import settings
 from src.core.exceptions import APIException
@@ -15,65 +16,29 @@ logger = logging.getLogger(__name__)
 
 class TokenCounter:
     """
-    Utility class for counting tokens in text, with support for Gemini's tokenizer
-    and fallback methods. Includes caching for performance and retry logic for API calls.
+    Utility class for counting tokens in text using a local estimator,
+    with caching for performance.
     """
     
     def __init__(self):
-        """Initialize the token counter with configured API key and fallback settings."""
-        self._model = None
-        self._use_fallback = False
+        """Initialize the token counter."""
         self._cache: Dict[str, int] = {}
-        try:
-            # Prefer GEMINI_API_KEY from settings; fall back to env var if necessary
-            api_key = getattr(settings, "GEMINI_API_KEY", None)
-            genai.configure(api_key=api_key)
-            # Initialize a model for token counting
-            self._model = genai.GenerativeModel(settings.LLM_MODEL_NAME)
-            # Test the tokenizer
-            self.count_tokens("test")
-            logger.info("TokenCounter initialized with Gemini tokenizer")
-        except Exception as e:
-            logger.warning(f"Failed to initialize Gemini tokenizer, using fallback: {e}")
-            self._use_fallback = True
+        logger.info("TokenCounter initialized with local estimator.")
 
-    @retry(
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=4, max=10),
-        reraise=True
-    )
     @lru_cache(maxsize=10000)  # Cache recent results
     def count_tokens(self, text: str) -> int:
         """
-        Count tokens in the given text using Gemini's tokenizer or fallback method.
+        Count tokens in the given text using a local approximation.
         
         Args:
             text: The text to count tokens for
             
         Returns:
             int: Number of tokens in the text
-            
-        Raises:
-            APIException: If token counting fails after retries
         """
         if not text:
             return 0
-            
-        try:
-            if self._use_fallback:
-                return self._count_tokens_fallback(text)
-                
-            # Use Gemini's model.count_tokens() method
-            if not self._model:
-                return self._count_tokens_fallback(text)
-            
-            result = self._model.count_tokens(text)
-            return result.total_tokens
-            
-        except Exception as e:
-            logger.error(f"Error counting tokens: {e}", exc_info=True)
-            # Fall back to approximate counting for this call
-            return self._count_tokens_fallback(text)
+        return self._count_tokens_fallback(text)
 
     def _count_tokens_fallback(self, text: str) -> int:
         """
@@ -130,24 +95,16 @@ class TokenCounter:
 
     def get_token_budget(self, reserve_ratio: float = 0.2) -> tuple[int, int]:
         """
-        Get recommended token budget and reserve for STM based on model limits.
-        
+        Get recommended token budget and reserve for STM.
+
+        Derived from configuration rather than a hardcoded vendor context limit,
+        so the budget follows whichever provider is active.
+
         Args:
-            reserve_ratio: Ratio of model's max tokens to reserve (default 0.2)
+            reserve_ratio: Ratio of the budget to hold back (default 0.2)
             
         Returns:
             tuple[int, int]: (token_budget, token_reserve)
         """
-        if self._use_fallback:
-            # Conservative defaults if we can't check model
-            return 25_000, 5_000
-            
-        try:
-            # Gemini's limit is 250k
-            MODEL_MAX_TOKENS = 250_000
-            reserve = int(MODEL_MAX_TOKENS * reserve_ratio)
-            budget = int(MODEL_MAX_TOKENS * 0.15)  # 15% for STM by default
-            return budget, reserve
-        except Exception as e:
-            logger.warning(f"Error getting token budget, using defaults: {e}")
-            return 25_000, 5_000  # Safe defaults
+        budget = getattr(settings, "STM_TOKEN_BUDGET", 25_000)
+        return budget, int(budget * reserve_ratio)

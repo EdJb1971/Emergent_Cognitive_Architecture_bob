@@ -189,6 +189,9 @@ async def lifespan(app: FastAPI):
         app.state.background_task_queue = BackgroundTaskQueue()
         logger.info("BackgroundTaskQueue initialized successfully.")
 
+        # Route summary and STM flush work off the request path.
+        app.state.memory_service.set_background_task_queue(app.state.background_task_queue)
+
         # Initialize DecisionEngine and wire it into MemoryService
         from src.services.decision_engine import create_decision_engine
         app.state.decision_engine = create_decision_engine(app.state.background_task_queue)

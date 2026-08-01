@@ -64,6 +64,12 @@ class MetaCognitiveMonitor:
         self.overconfidence_threshold = 0.6  # Agent confidence vs knowledge coverage ratio
         self.confidence_variance_threshold = 0.5  # Max variance in agent confidences
         self.min_confidence_threshold = 0.4  # Minimum confidence to proceed
+        self.max_uncertainty_output_tokens = max(
+            16, int(getattr(settings, "META_COGNITIVE_MAX_OUTPUT_TOKENS", 64))
+        )
+        self.max_uncertainty_response_words = max(
+            8, int(getattr(settings, "META_COGNITIVE_MAX_RESPONSE_WORDS", 40))
+        )
 
         logger.info("MetaCognitiveMonitor initialized with knowledge gap detection.")
 
@@ -383,8 +389,8 @@ class MetaCognitiveMonitor:
             response = await self.llm_service.generate_text(
                 prompt=prompt,
                 model_name=settings.LLM_MODEL_NAME,
-                temperature=0.7,  # Some creativity for natural responses
-                max_output_tokens=100
+                temperature=0.3,
+                max_output_tokens=self.max_uncertainty_output_tokens
             )
 
             # Clean up response
@@ -392,7 +398,7 @@ class MetaCognitiveMonitor:
             if response.startswith('"') and response.endswith('"'):
                 response = response[1:-1]
 
-            return response
+            return self._truncate_uncertainty_response(response)
 
         except Exception as e:
             logger.warning(f"Uncertainty response generation failed: {e}")
@@ -404,6 +410,12 @@ class MetaCognitiveMonitor:
                 ActionRecommendation.ACKNOWLEDGE_UNCERTAINTY: "I'm not 100% certain about that, but here's what I think."
             }
             return fallbacks.get(recommendation, "I'm not entirely sure about that.")
+
+    def _truncate_uncertainty_response(self, text: str) -> str:
+        words = text.split()
+        if len(words) <= self.max_uncertainty_response_words:
+            return text
+        return " ".join(words[: self.max_uncertainty_response_words]).rstrip(".,;:!?") + "."
 
     # Helper methods
 

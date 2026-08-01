@@ -46,6 +46,8 @@ class Settings(BaseSettings):
     LLM_GLOBAL_MAX_CONCURRENCY: int = Field(6, env="LLM_GLOBAL_MAX_CONCURRENCY")
     LLM_429_BASE_DELAY_SEC: float = Field(10.0, env="LLM_429_BASE_DELAY_SEC")
     LLM_429_JITTER_SEC: float = Field(0.5, env="LLM_429_JITTER_SEC")
+    META_COGNITIVE_MAX_OUTPUT_TOKENS: int = Field(64, env="META_COGNITIVE_MAX_OUTPUT_TOKENS")
+    META_COGNITIVE_MAX_RESPONSE_WORDS: int = Field(40, env="META_COGNITIVE_MAX_RESPONSE_WORDS")
 
     # Web Browsing Service Settings (for WebBrowsingService)
     SERPAPI_API_KEY: Optional[str] = Field(None, env="SERPAPI_API_KEY")

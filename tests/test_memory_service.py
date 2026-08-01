@@ -42,6 +42,34 @@ async def test_upsert_cycle_stores_cycle_in_stm_ltm_and_summary(memory_service, 
 
 
 @pytest.mark.asyncio
+async def test_upsert_cycle_queues_summary_update_when_background_queue_is_configured(memory_service):
+    class StubQueue:
+        def __init__(self):
+            self.calls = []
+
+        def enqueue_task(self, coro, task_name="background_task"):
+            self.calls.append((coro, task_name))
+
+    queue = StubQueue()
+    memory_service.set_background_task_queue(queue)
+
+    cycle = CognitiveCycle(
+        user_id=uuid4(),
+        session_id=uuid4(),
+        user_input="Remember this in the background",
+        final_response="Queued summary",
+    )
+
+    stored = await memory_service.upsert_cycle(cycle)
+
+    assert stored is True
+    assert len(queue.calls) == 1
+    assert queue.calls[0][1].startswith("summary_update_")
+    queue.calls[0][0].close()
+    memory_service.summary_manager.update_summary.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_query_memory_merges_ranked_stm_and_ltm_results(memory_service, mock_llm_service):
     user_id = uuid4()
     stm_cycle = CognitiveCycle(

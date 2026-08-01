@@ -1,6 +1,7 @@
 import logging
 import json
 import asyncio
+import time
 from typing import List, Dict, Any, Optional, Tuple, Union
 from uuid import UUID
 from datetime import datetime
@@ -82,9 +83,15 @@ class MemoryService:
     Responsible for generating embeddings, storing complete cognitive cycles with rich metadata,
     and providing various querying capabilities while enforcing strict user isolation.
     """
-    def __init__(self, llm_service: LLMIntegrationService, metrics_service: Optional[MetricsService] = None):
+    def __init__(
+        self,
+        llm_service: LLMIntegrationService,
+        metrics_service: Optional[MetricsService] = None,
+        background_task_queue: Optional[Any] = None,
+    ):
         self.llm_service = llm_service
         self.metrics_service = metrics_service
+        self.background_task_queue = background_task_queue
         self.client: Optional[chromadb.Client] = None
         self.cycles_collection: Optional[chromadb.Collection] = None
         self.patterns_collection: Optional[chromadb.Collection] = None
@@ -100,6 +107,7 @@ class MemoryService:
         
         # Per-user locks for STM operations
         self._stm_locks: Dict[UUID, asyncio.Lock] = {}
+        self._summary_locks: Dict[UUID, asyncio.Lock] = {}
         
         # Token budget configuration
         # Use getattr to avoid AttributeError when settings don't define these (e.g., in tests)
@@ -233,16 +241,7 @@ class MemoryService:
 
             # 2) Update conversation summary
             try:
-                await self.summary_manager.update_summary(cognitive_cycle.user_id, cognitive_cycle)
-                logger.info(f"Updated conversation summary for user {cognitive_cycle.user_id}")
-                if self.decision_engine:
-                    signals = {
-                        "event": "summary_updated",
-                        "user_id": str(cognitive_cycle.user_id),
-                        "cycle_id": str(cognitive_cycle.cycle_id),
-                        "timestamp": cognitive_cycle.timestamp.isoformat(),
-                    }
-                    await self._emit_signals(cognitive_cycle.user_id, signals)
+                await self._queue_summary_update(cognitive_cycle)
             except Exception as e:
                 logger.error(f"Summary update failed for user {cognitive_cycle.user_id}: {e}", exc_info=True)
 
@@ -269,7 +268,7 @@ class MemoryService:
 
             # 4) If STM over budget, summarize and flush old cycles to LTM
             if should_flush and cycles_to_flush:
-                await self.flush_to_ltm(cognitive_cycle.user_id, cycles_to_flush)
+                await self._queue_flush_to_ltm(cognitive_cycle.user_id, cycles_to_flush)
             return True
         except Exception as e:
                 logger.error(f"Unexpected error storing cycle for user {cognitive_cycle.user_id}: {e}", exc_info=True)
@@ -279,6 +278,12 @@ class MemoryService:
         if user_id not in self._stm_locks:
             self._stm_locks[user_id] = asyncio.Lock()
         return self._stm_locks[user_id]
+
+    def _get_summary_lock(self, user_id: UUID) -> asyncio.Lock:
+        """Get or create a lock for summary updates for a user."""
+        if user_id not in self._summary_locks:
+            self._summary_locks[user_id] = asyncio.Lock()
+        return self._summary_locks[user_id]
 
     async def add_cycle(self, cognitive_cycle: CognitiveCycle) -> Tuple[bool, Optional[List[CognitiveCycle]]]:
         """
@@ -327,6 +332,57 @@ class MemoryService:
         Kept loosely typed to avoid circular import issues at module import time.
         """
         self.decision_engine = decision_engine
+
+    def set_background_task_queue(self, background_task_queue: Any):
+        """Attach the background queue used for deferred memory work."""
+        self.background_task_queue = background_task_queue
+        logger.info("BackgroundTaskQueue wired into MemoryService.")
+
+    async def _queue_summary_update(self, cognitive_cycle: CognitiveCycle):
+        """Run per-turn summary updates in the background when queueing is available."""
+        task_name = f"summary_update_{cognitive_cycle.user_id}_{cognitive_cycle.cycle_id}"
+        if self.background_task_queue:
+            self.background_task_queue.enqueue_task(
+                self._run_summary_update(cognitive_cycle),
+                task_name=task_name,
+            )
+            logger.info(
+                f"Queued summary update for user {cognitive_cycle.user_id} in background ({task_name})."
+            )
+            return
+        await self._run_summary_update(cognitive_cycle)
+
+    async def _run_summary_update(self, cognitive_cycle: CognitiveCycle):
+        """Apply summary updates under a per-user lock to avoid overlap races."""
+        started = time.perf_counter()
+        user_id = cognitive_cycle.user_id
+        async with self._get_summary_lock(user_id):
+            await self.summary_manager.update_summary(user_id, cognitive_cycle)
+            logger.info(
+                "Updated conversation summary for user %s in %.0fms",
+                user_id,
+                (time.perf_counter() - started) * 1000,
+            )
+            if self.decision_engine:
+                signals = {
+                    "event": "summary_updated",
+                    "user_id": str(user_id),
+                    "cycle_id": str(cognitive_cycle.cycle_id),
+                    "timestamp": cognitive_cycle.timestamp.isoformat(),
+                }
+                await self._emit_signals(user_id, signals)
+
+    async def _queue_flush_to_ltm(self, user_id: UUID, cycles: List[CognitiveCycle]):
+        """Defer expensive STM summarization flush work when a queue is configured."""
+        task_name = f"stm_flush_{user_id}_{datetime.utcnow().timestamp()}"
+        if self.background_task_queue:
+            self.background_task_queue.enqueue_task(
+                self.flush_to_ltm(user_id, cycles),
+                task_name=task_name,
+            )
+            logger.info(f"Queued STM flush for user {user_id} in background ({task_name}).")
+            return
+        await self.flush_to_ltm(user_id, cycles)
 
     async def _emit_signals(self, user_id: UUID, signals: Dict[str, Any]):
         """Internal helper to forward signals to the DecisionEngine if configured."""

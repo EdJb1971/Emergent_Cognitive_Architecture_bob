@@ -15,7 +15,8 @@ class Settings(BaseSettings):
     DEBUG_MODE: bool = False
 
     # LLM Integration Service Settings
-    GEMINI_API_KEY: str = Field(..., env="GEMINI_API_KEY")
+    # Optional: only required when a Gemini-backed provider is actually selected.
+    GEMINI_API_KEY: Optional[str] = Field(None, env="GEMINI_API_KEY")
     LLM_MODEL_NAME: str = "models/gemini-2.5-flash-lite" # Default LLM model for text generation by agents
     EMBEDDING_MODEL_NAME: str = "models/embedding-001" # Default LLM model for embedding generation
     LLM_MODEL_FOR_RESPONSE_GENERATION: str = "models/gemini-2.5-flash-lite" # Specific model for Cognitive Brain's final response
@@ -23,6 +24,13 @@ class Settings(BaseSettings):
     LLM_PROVIDER: str = Field("gemini", env="LLM_PROVIDER")
     OLLAMA_BASE_URL: str = Field("http://localhost:11434", env="OLLAMA_BASE_URL")
     OLLAMA_CHAT_MODEL: str = Field("", env="OLLAMA_CHAT_MODEL")
+    EMBEDDING_PROVIDER: str = Field("gemini", env="EMBEDDING_PROVIDER")
+    OLLAMA_EMBEDDING_MODEL: str = Field("", env="OLLAMA_EMBEDDING_MODEL")
+    OLLAMA_MAX_INTERACTIVE_REQUESTS: int = Field(1, env="OLLAMA_MAX_INTERACTIVE_REQUESTS")
+    OLLAMA_MAX_BACKGROUND_REQUESTS: int = Field(1, env="OLLAMA_MAX_BACKGROUND_REQUESTS")
+    MODERATION_PROVIDER: str = Field("gemini", env="MODERATION_PROVIDER")
+    # Fails startup when a collection's stored embedding identity differs from the active provider.
+    EMBEDDING_IDENTITY_ENFORCED: bool = Field(True, env="EMBEDDING_IDENTITY_ENFORCED")
 
     # LLM Rate limiting & concurrency
     LLM_MAX_CONCURRENCY_PER_MODEL: int = Field(2, env="LLM_MAX_CONCURRENCY_PER_MODEL")

@@ -36,7 +36,14 @@ from src.agents.critic_agent import CriticAgent
 from src.agents.discovery_agent import DiscoveryAgent
 from src.services.web_browsing_service import WebBrowsingService
 from src.services.audio_input_processor import AudioInputProcessor
-from src.providers import GeminiProvider, OllamaProbe
+from src.providers import (
+    CompositeProvider,
+    GeminiProvider,
+    ModelExecutionScheduler,
+    OllamaEmbeddingProvider,
+    OllamaProbe,
+    OllamaProvider,
+)
 from src.dependencies import APIKeyAuth, get_api_key_user_id # Import the authentication dependency
 from typing import Dict, Any, List, Optional
 from uuid import UUID
@@ -47,6 +54,63 @@ from src.core.exceptions import LLMServiceException, ConfigurationError
 from src.core.logging_config import setup_logging
 setup_logging()
 logger = logging.getLogger(__name__)
+
+
+def _build_active_provider(scheduler: ModelExecutionScheduler):
+    """Select generation, embedding, and safety providers independently from configuration."""
+    cached_gemini: Optional[GeminiProvider] = None
+
+    def gemini() -> GeminiProvider:
+        nonlocal cached_gemini
+        if cached_gemini is None:
+            cached_gemini = GeminiProvider(LLMIntegrationService())
+        return cached_gemini
+
+    def require_ollama_model(name: str, setting: str):
+        if not name:
+            raise ConfigurationError(detail=f"{setting} must be set when Ollama is selected.")
+        return name
+
+    generation_choice = settings.LLM_PROVIDER.lower()
+    if generation_choice == "ollama":
+        generation = OllamaProvider(
+            base_url=settings.OLLAMA_BASE_URL,
+            model=require_ollama_model(settings.OLLAMA_CHAT_MODEL, "OLLAMA_CHAT_MODEL"),
+            scheduler=scheduler,
+        )
+    elif generation_choice == "gemini":
+        generation = gemini()
+    else:
+        raise ConfigurationError(detail=f"Unsupported LLM_PROVIDER '{settings.LLM_PROVIDER}'.")
+
+    embedding_choice = settings.EMBEDDING_PROVIDER.lower()
+    if embedding_choice == "ollama":
+        embedding = OllamaEmbeddingProvider(
+            base_url=settings.OLLAMA_BASE_URL,
+            model=require_ollama_model(settings.OLLAMA_EMBEDDING_MODEL, "OLLAMA_EMBEDDING_MODEL"),
+            scheduler=scheduler,
+        )
+    elif embedding_choice == "gemini":
+        embedding = gemini()
+    else:
+        raise ConfigurationError(detail=f"Unsupported EMBEDDING_PROVIDER '{settings.EMBEDDING_PROVIDER}'.")
+
+    moderation_choice = settings.MODERATION_PROVIDER.lower()
+    if moderation_choice == "ollama":
+        safety = generation if generation_choice == "ollama" else OllamaProvider(
+            base_url=settings.OLLAMA_BASE_URL,
+            model=require_ollama_model(settings.OLLAMA_CHAT_MODEL, "OLLAMA_CHAT_MODEL"),
+            scheduler=scheduler,
+        )
+    elif moderation_choice == "gemini":
+        safety = gemini()
+    else:
+        raise ConfigurationError(detail=f"Unsupported MODERATION_PROVIDER '{settings.MODERATION_PROVIDER}'.")
+
+    if generation is embedding is safety:
+        return generation
+    return CompositeProvider(generation, embedding, safety)
+
 # Application lifespan events
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -54,20 +118,29 @@ async def lifespan(app: FastAPI):
     logger.info(f"Starting up {settings.APP_NAME} in {settings.ENVIRONMENT} environment...")
 
     try:
-        # Keep Gemini as the active provider during the local-provider migration.
-        app.state.llm_service = GeminiProvider(LLMIntegrationService())
-        app.state.llm_provider = app.state.llm_service.capabilities
         app.state.ollama_probe = OllamaProbe(
             base_url=settings.OLLAMA_BASE_URL,
             model_name=settings.OLLAMA_CHAT_MODEL,
+            embedding_model=settings.OLLAMA_EMBEDDING_MODEL,
         )
+        app.state.model_execution_scheduler = ModelExecutionScheduler(
+            max_interactive=settings.OLLAMA_MAX_INTERACTIVE_REQUESTS,
+            max_background=settings.OLLAMA_MAX_BACKGROUND_REQUESTS,
+        )
+        app.state.llm_service = _build_active_provider(app.state.model_execution_scheduler)
+        app.state.llm_provider = app.state.llm_service.capabilities
         app.state.ollama_status = await app.state.ollama_probe.probe()
+        # Resolve the vector dimension before any collection is stamped with this identity.
+        app.state.embedding_identity = await app.state.llm_service.verify()
         logger.info(
-            "Active LLM provider initialized: %s (%s). Ollama available=%s, configured model installed=%s.",
+            "Active provider: %s (%s, local=%s). Embedding identity: %s. Ollama available=%s, chat model installed=%s, embedding model installed=%s.",
             app.state.llm_provider.provider,
             app.state.llm_provider.model,
+            app.state.llm_provider.is_local,
+            app.state.embedding_identity.describe(),
             app.state.ollama_status["available"],
             app.state.ollama_status["model_installed"],
+            app.state.ollama_status["embedding_model_installed"],
         )
 
         # Initialize MemoryService and connect to ChromaDB
@@ -1474,10 +1547,46 @@ async def deep_health_check_endpoint(request_obj: Request):
         logger.error(f"Deep health check: LLM service failed: {e}", exc_info=True)
 
     try:
+        capabilities = request_obj.app.state.llm_provider
+        identity = request_obj.app.state.embedding_identity
+        health_status["components"]["active_provider"] = {
+            "status": "healthy",
+            "provider": capabilities.provider,
+            "model": capabilities.model,
+            "is_local": capabilities.is_local,
+            "embedding_identity": identity.describe(),
+            "embedding_provider": identity.provider,
+            "embedding_model": identity.model,
+            "embedding_dimension": identity.vector_dimension,
+        }
+    except Exception as e:
+        health_status["components"]["active_provider"] = {
+            "status": "unhealthy",
+            "message": f"Provider capability check failed: {e}",
+        }
+        health_status["status"] = "degraded"
+
+    try:
         ollama_status = await request_obj.app.state.ollama_probe.probe()
         health_status["components"]["ollama"] = ollama_status
     except Exception as e:
         health_status["components"]["ollama"] = {"available": False, "message": f"Ollama probe failed: {e}"}
+
+    try:
+        scheduler = await request_obj.app.state.model_execution_scheduler.snapshot()
+        health_status["components"]["model_execution_scheduler"] = {
+            "status": "healthy",
+            "active_interactive": scheduler.active_interactive,
+            "active_background": scheduler.active_background,
+            "max_interactive": scheduler.max_interactive,
+            "max_background": scheduler.max_background,
+        }
+    except Exception as e:
+        health_status["components"]["model_execution_scheduler"] = {
+            "status": "unhealthy",
+            "message": f"Scheduler check failed: {e}",
+        }
+        health_status["status"] = "degraded"
 
     # Check Memory Service (ChromaDB connection)
     try:

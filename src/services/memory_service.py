@@ -15,6 +15,7 @@ from src.core.exceptions import ConfigurationError, APIException
 from src.models.core_models import CognitiveCycle, MemoryQueryRequest, DiscoveredPattern, CycleListRequest
 from src.models.memory_models import ConversationSummary, ShortTermMemory, MemoryAccessStats
 from src.services.llm_integration_service import LLMIntegrationService
+from src.services.embedding_identity import apply_embedding_identity, resolve_embedding_identity
 from src.services.summary_manager import SummaryManager
 from src.services.metrics_service import MetricsService, MetricType
 from src.agents.utils import UUIDEncoder
@@ -130,6 +131,11 @@ class MemoryService:
                 self.cycles_collection = self.client.get_or_create_collection(
                     name=settings.CHROMA_COLLECTION_CYCLES,
                     embedding_function=embedding_functions.DefaultEmbeddingFunction()
+                )
+                apply_embedding_identity(
+                    self.cycles_collection,
+                    resolve_embedding_identity(self.llm_service),
+                    enforced=settings.EMBEDDING_IDENTITY_ENFORCED,
                 )
                 self.patterns_collection = self.client.get_or_create_collection(
                     name=settings.CHROMA_COLLECTION_PATTERNS

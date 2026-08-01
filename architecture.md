@@ -7,7 +7,9 @@ This document describes the Emergent Cognitive Architecture (ECA), a brain-inspi
 
 ## Implementation Status (Code Audit: August 1, 2026)
 
-The backend is a local, single-user research prototype. A valid API key always maps to the fixed `SYSTEM_USER_ID` in `src/dependencies.py`, so per-user behavior is not available to multiple distinct users yet.
+**North star.** A locally-run cognitive architecture with persistent memory and continuous learning, where ordinary conversation, memory, and reasoning never leave the machine, and cloud inference is reserved for an explicit, auditable research escalation path. No provider is structurally privileged: generation, embeddings, moderation, and research are separately selectable capabilities behind a common contract.
+
+**Scope by design.** This is a single-operator system. One API key maps to the fixed `SYSTEM_USER_ID` in `src/dependencies.py`. That is a deliberate choice, not an unfinished feature: it keeps the memory, self-model, and learning systems coherent around one continuous relationship. If external access is ever added it will be bring-your-own-key with explicit model selection, which is why credentials and model names are configuration rather than constants. Consequently, hardening normally required for multi-tenant deployments (rate limiting, per-user isolation, key rotation) is intentionally out of scope.
 
 | Area | Current status | Evidence / boundary |
 | --- | --- | --- |
@@ -17,10 +19,14 @@ The backend is a local, single-user research prototype. A valid API key always m
 | Memory consolidation | Implemented service, not automatically scheduled | `MemoryConsolidationService` can create and execute jobs, but app startup does not start a periodic 30-minute loop or enqueue jobs automatically. |
 | Metrics/dashboard | Partial | REST metrics and research endpoints exist. Metrics ChromaDB initialization is asynchronous and not awaited at startup. The WebSocket sends an initial snapshot then waits for client messages; broadcast updates are not implemented. |
 | Multimodal input | Partial | Audio transcription is wired into the cycle. `VisualInputProcessor` exists but is not wired into application startup or the cognitive cycle. |
-| Provider seam | Implemented, Gemini-active | `LLMProvider` defines the minimal chat, embedding, and moderation contract. `GeminiProvider` delegates to the existing Gemini service, so routine routing remains Gemini-backed. |
-| Ollama readiness | Implemented probe, local runtime unavailable | Startup and `/health/deep` call `OllamaProbe` against `/api/tags`; it reports installed-model status without routing requests to Ollama. The August 1 probe could not reach `http://localhost:11434`. |
+| Provider selection | Implemented, configuration-driven | `_build_active_provider()` in `main.py` resolves generation, embedding, and moderation independently from `LLM_PROVIDER`, `EMBEDDING_PROVIDER`, and `MODERATION_PROVIDER`. Mixed selections are composed by `CompositeProvider`; a uniform selection returns the single adapter. Unknown values fail startup. |
+| Provider neutrality | Implemented at the seam, Gemini-configured | `GEMINI_API_KEY` is optional and is only required when a Gemini-backed provider is actually selected. No agent imports a provider SDK or hardcodes a model name. The shipped default configuration selects Gemini for all three roles because that is the only cloud key currently held. |
+| Ollama text generation | Implemented, not the default | `OllamaProvider` is selectable via `LLM_PROVIDER=ollama` and admitted through `ModelExecutionScheduler`. `gemma4:e4b` completed a local GPU text smoke test on August 1, 2026. Its Ollama embedding endpoint returns `501 Not Implemented`, so it is a generation-only model. |
+| Local embeddings | Implemented and selectable; migration outstanding | `embeddinggemma:latest` returns local `768`-dimension vectors through `OllamaEmbeddingProvider`. Selecting it today is blocked at startup by the identity guard below, because existing collections hold Gemini vectors. |
+| Embedding identity guard | Implemented | Collections are stamped with `embedding_provider`, `embedding_model`, and `embedding_dimension`. `apply_embedding_identity()` compares provider and model, never dimension, and refuses to open a collection written by a different embedding model. Untagged non-empty collections are treated as legacy `gemini/models/embedding-001`. |
+| Vector migration | Not implemented | There is no command to rebuild an existing collection into a new vector space, and no measured retrieval comparison between Gemini and local embeddings. |
 | Salience network | Planned | There is a feature flag only; no `SalienceNetwork` implementation is present. |
-| Validation | Repaired baseline | The repository virtual environment runs `49 passed, 3 skipped` on August 1, 2026. This is a regression baseline, not evidence that learning, retrieval, or routing quality has been measured. |
+| Validation | Repaired baseline | The repository virtual environment runs `64 passed, 3 skipped` on August 1, 2026. This is a regression baseline, not evidence that learning, retrieval, or routing quality has been measured. |
 
 The phase sections below retain the design intent. Treat statements about autonomous background execution, measured performance improvements, or real-time streaming as planned unless this status section explicitly marks them implemented.
 
@@ -29,6 +35,7 @@ The phase sections below retain the design intent. Treat statements about autono
 1. [High-Level Architecture](#high-level-architecture)
 2. [Core Principles](#core-principles)
 3. [Backend Architecture](#backend-architecture)
+   - [Provider Layer](#provider-layer)
 4. [Brain-Inspired Cognitive Architecture](#brain-inspired-cognitive-architecture)
    - [Phase 1: Core Self-Awareness & Working Memory](#phase-1-core-self-awareness--working-memory--completed)
    - [Phase 2: Selective Attention & Coherence](#phase-2-selective-attention--coherence--completed)
@@ -149,13 +156,14 @@ The ECA is a full-stack application with a **React/TypeScript frontend** and a *
 
 *   **Parallelism and Selective Attention:** Agents process input concurrently, but the ThalamusGateway selectively activates only necessary agents based on input complexity, urgency, and context needs (mimicking human attention).
 
-  **Runtime status:** Selective routing is implemented. **Validation status:** Agent-level tasks are dispatched with `asyncio.gather`, but local-model concurrency, GPU residency, and end-to-end throughput have not been measured. **Operational limitation:** A local inference scheduler does not yet exist.
+  **Runtime status:** Selective routing is implemented. **Validation status:** Agent-level tasks are dispatched with `asyncio.gather`, but local-model concurrency, GPU residency, and end-to-end throughput have not been measured. **Operational limitation:** `ModelExecutionScheduler` bounds local inference, but its limits are configured rather than derived from measured hardware capacity.
 
 *   **Multi-Tier Memory System:** Implements human-like memory hierarchy:
-  - **Short-Term Memory (STM):** Token-limited immediate context (configurable, 25k–50k tokens for Gemini)
+  - **Short-Term Memory (STM):** Token-limited immediate context (configurable, currently 25k–50k tokens tuned to the Gemini context window; budgets are not yet derived from active provider capabilities)
   - **Summary Memory:** Condensed conversation context with semantic search
   - **Long-Term Memory (LTM):** Persistent storage with episodic and semantic separation
   - **Autobiographical Memory:** Narrative timeline construction with significance tracking
+  - **Vector-space integrity:** Every embedding-backed collection records the provider and model that produced its vectors; mixing vector spaces fails closed rather than degrading retrieval silently
 
 *   **Continuous Learning:** The system learns from experience through:
   - **Reinforcement Learning:** Q-learning for strategy optimization and habit formation
@@ -170,7 +178,9 @@ The ECA is a full-stack application with a **React/TypeScript frontend** and a *
 
 *   **Self-Awareness and Continuity:** SelfModel maintains identity, autobiographical memories, and relationship tracking across sessions (inspired by the default mode network).
 
-*   **Safety and Security:** `/chat` performs input moderation and API-key authentication for local use. Rate limiting and separate final-output moderation are not implemented.
+*   **Safety and Security:** `/chat` performs input moderation and API-key authentication. Moderation runs through a separately selectable provider (`MODERATION_PROVIDER`), so it can be moved local independently of generation. Rate limiting and separate final-output moderation are not implemented, and are out of scope for a single-operator system.
+
+*   **Provider Neutrality:** Generation, embeddings, and moderation are distinct capabilities resolved from configuration at startup. Any external provider is expected to be bring-your-own-key with an explicitly selected model; no provider SDK or model name is referenced by an agent or service.
 
 *   **Observability:** Comprehensive structured logging, performance metrics, and audit trails for all cognitive operations and autonomous events.
 
@@ -206,7 +216,14 @@ The backend is a FastAPI application serving a RESTful API for the frontend.
 │   │   ├── core_models.py           # Core system models (UserRequest, AgentOutput, CognitiveCycle, ErrorAnalysis)
 │   │   ├── memory_models.py         # Memory system models (STM, Summary, LTM)
 │   │   └── multimodal_models.py     # Multimodal input/output models
-│   ├── providers/                   # Provider contracts, Gemini adapter, Ollama probe
+│   ├── providers/                   # Provider contracts and adapters
+│   │   ├── base.py                  # Capabilities, request/result envelopes, embedding identity
+│   │   ├── composite_provider.py    # Independently selected generation/embedding/safety
+│   │   ├── execution_scheduler.py   # Bounded local inference admission control
+│   │   ├── gemini_provider.py       # Gemini adapter (cloud)
+│   │   ├── ollama_provider.py       # Local text generation adapter
+│   │   ├── ollama_embedding_provider.py # Local embedding adapter
+│   │   └── ollama_probe.py          # Local server/model availability probe
 │   └── services/                    # Business logic and core services
 │       ├── audio_input_processor.py         # Audio input processing and transcription
 │       ├── autobiographical_memory_system.py # Narrative timeline and significance tracking
@@ -215,9 +232,10 @@ The backend is a FastAPI application serving a RESTful API for the frontend.
 │       ├── conflict_monitor.py              # Coherence detection (ACC-inspired)
 │       ├── contextual_memory_encoder.py     # Rich contextual bindings
 │       ├── decision_engine.py               # Autonomous triggering and decision making
+│       ├── embedding_identity.py            # Binds Chroma collections to their embedding model
 │       ├── emotional_memory_service.py      # Emotional intelligence tracking
 │       ├── emotional_salience_encoder.py    # Emotional significance tagging
-│       ├── llm_integration_service.py       # Google Gemini API wrapper
+│       ├── llm_integration_service.py       # Google Gemini SDK client (used only by GeminiProvider)
 │       ├── memory_consolidation_service.py  # Memory consolidation (sleep-like processing)
 │       ├── memory_service.py                # Memory storage and retrieval (STM/LTM)
 │       ├── meta_cognitive_monitor.py        # Knowledge boundary detection
@@ -239,6 +257,30 @@ The backend is a FastAPI application serving a RESTful API for the frontend.
     ├── test_orchestration_service.py
     └── test_llm_integration_service.py
 ```
+
+### Provider Layer
+
+Services and agents never talk to a model SDK. They hold a provider object satisfying `LLMProvider` and, where relevant, `EmbeddingProvider` (`src/providers/base.py`). Three roles are resolved independently at startup by `_build_active_provider()` in `main.py`:
+
+| Role | Setting | Adapters |
+| --- | --- | --- |
+| Generation | `LLM_PROVIDER` | `GeminiProvider`, `OllamaProvider` |
+| Embeddings | `EMBEDDING_PROVIDER` | `GeminiProvider`, `OllamaEmbeddingProvider` |
+| Moderation | `MODERATION_PROVIDER` | `GeminiProvider`, `OllamaProvider` |
+
+If all three resolve to the same adapter it is used directly; otherwise `CompositeProvider` fans each call out to its selected provider. `CompositeProvider.capabilities.is_local` is true only when **all three** roles are local, so a cloud moderation call cannot be hidden behind an otherwise-local configuration.
+
+`ModelExecutionScheduler` admits local calls under separate interactive and background limits, so background work cannot starve a chat cycle of the single local model. Cloud adapters do not use it.
+
+**Embedding identity.** An embedding vector is only meaningful within the vector space of the model that produced it. Because Gemini `models/embedding-001` and `embeddinggemma` both emit 768 dimensions, dimensional compatibility is not evidence of interchangeability, and a naive check would let two incompatible spaces mix while retrieval quietly degraded. Therefore:
+
+- `EmbeddingProvider.verify()` is awaited at startup to resolve the runtime dimension before any collection is opened.
+- Each embedding-backed collection is stamped with `embedding_provider`, `embedding_model`, `embedding_dimension`, and an identity schema version.
+- `apply_embedding_identity()` compares **provider and model**, never dimension, and raises `EmbeddingIdentityMismatch` on conflict.
+- A non-empty collection with no identity metadata predates this guard and is assumed to hold `gemini/models/embedding-001` vectors.
+- `EMBEDDING_IDENTITY_ENFORCED=false` downgrades the failure to a warning for recovery work only.
+
+The practical consequence is that switching `EMBEDDING_PROVIDER` on an existing database fails at startup by design. Changing embedding models requires rebuilding into a new collection, which is not yet implemented.
 
 ---
 
@@ -2361,11 +2403,27 @@ export const sendMessage = async (
 ### Configuration
 
 **Environment Variables:**
+
+`.env.example` is the authoritative list. The essentials:
+
 ```bash
-# API Keys
+# Credentials. GEMINI_API_KEY is required only when a Gemini-backed role is selected.
 GEMINI_API_KEY=your_gemini_api_key
 SECRET_KEY=your_backend_secret
 API_KEY=your_frontend_to_backend_api_key
+
+# Provider roles, resolved independently at startup. Each accepts 'gemini' or 'ollama'.
+LLM_PROVIDER=gemini
+EMBEDDING_PROVIDER=gemini
+MODERATION_PROVIDER=gemini
+OLLAMA_BASE_URL=http://127.0.0.1:11434
+OLLAMA_CHAT_MODEL=gemma4:e4b
+OLLAMA_EMBEDDING_MODEL=embeddinggemma:latest
+OLLAMA_MAX_INTERACTIVE_REQUESTS=1
+OLLAMA_MAX_BACKGROUND_REQUESTS=1
+
+# Fails startup rather than mixing vector spaces. Disable only for recovery.
+EMBEDDING_IDENTITY_ENFORCED=true
 
 # Web Browsing (choose one provider; Google CSE recommended)
 # For Google Programmable Search (Custom Search JSON API):

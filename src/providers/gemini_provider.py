@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional
 
 from src.core.config import settings
-from src.providers.base import ProviderCapabilities
+from src.providers.base import EmbeddingModelIdentity, ProviderCapabilities
 from src.services.llm_integration_service import LLMIntegrationService
 
 
@@ -12,6 +12,7 @@ class GeminiProvider:
 
     def __init__(self, service: Optional[LLMIntegrationService] = None):
         self._service = service or LLMIntegrationService()
+        self._vector_dimension: Optional[int] = None
         self.capabilities = ProviderCapabilities(
             provider="gemini",
             model=settings.LLM_MODEL_NAME,
@@ -51,10 +52,29 @@ class GeminiProvider:
     async def generate_embedding(
         self, text: str, model_name: Optional[str] = None
     ) -> List[float]:
-        return await self._service.generate_embedding(
+        embedding = await self._service.generate_embedding(
             text=text,
             model_name=model_name or settings.EMBEDDING_MODEL_NAME,
         )
+        if self._vector_dimension is None and embedding:
+            self._vector_dimension = len(embedding)
+        return embedding
+
+    async def embed(self, text: str) -> List[float]:
+        return await self.generate_embedding(text)
+
+    @property
+    def identity(self) -> EmbeddingModelIdentity:
+        return EmbeddingModelIdentity(
+            provider="gemini",
+            model=settings.EMBEDDING_MODEL_NAME,
+            vector_dimension=self._vector_dimension,
+        )
+
+    async def verify(self) -> EmbeddingModelIdentity:
+        if self._vector_dimension is None:
+            await self.generate_embedding("embedding identity probe")
+        return self.identity
 
     async def moderate_content(
         self,

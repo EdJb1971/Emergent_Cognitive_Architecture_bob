@@ -12,6 +12,7 @@ from src.core.config import settings
 from src.core.exceptions import ConfigurationError, APIException
 from src.models.core_models import CognitiveCycle
 from src.models.memory_models import ConversationSummary
+from src.services.embedding_identity import apply_embedding_identity, resolve_embedding_identity
 from src.services.llm_integration_service import LLMIntegrationService
 
 logger = logging.getLogger(__name__)
@@ -48,6 +49,11 @@ class SummaryManager:
             self.summaries_collection = self.client.get_or_create_collection(
                 name="conversation_summaries",
                 embedding_function=embedding_functions.DefaultEmbeddingFunction()
+            )
+            apply_embedding_identity(
+                self.summaries_collection,
+                resolve_embedding_identity(self.llm_service),
+                enforced=settings.EMBEDDING_IDENTITY_ENFORCED,
             )
             # Also reference the cycles collection for identity mining; reuse existing without redefining embedding function
             try:

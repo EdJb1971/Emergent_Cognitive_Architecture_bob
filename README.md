@@ -89,8 +89,8 @@ repo/
 ├─ frontend/               # React + Tailwind dashboard (optional)
 ├─ chroma_db/              # Persistent embeddings + RL tables (git-ignored)
 ├─ tests/                  # Pytest suites for services and integrations
-├─ architecture.md         # Comprehensive design documentation
-├─ completebrainplan.md    # Neuroscience-aligned roadmap with decision logs
+├─ architecture.md         # Audited implementation and system design
+├─ roadmap.md              # Canonical plan and delivery tracker
 └─ README.md               # You are here
 ```
 
@@ -118,7 +118,7 @@ source .venv/bin/activate  # On Windows: .\.venv\Scripts\activate
 pip install -r requirements.txt
 
 # Copy environment template and add your keys
-cp .env.example .env
+npm install
 # Edit .env with your GEMINI_API_KEY, etc.
 
 # Run the server
@@ -130,7 +130,7 @@ uvicorn main:app --reload
 ```bash
 cd frontend
 npm install
-npm run dev
+npm run devc
 ```
 
 The frontend consumes the FastAPI backend for live cycle traces, drift telemetry, and learning metrics.
@@ -191,16 +191,10 @@ pytest tests/test_llm_integration_service.py -v
 
 ---
 
-## Roadmap
+## Project Documents
 
-| Phase | Status | Focus |
-|-------|--------|-------|
-| Phase 1-5 | ✅ Complete | Foundation, perception, memory, executive functions, metacognition |
-| Phase 6 | ✅ Complete | Reinforcement learning, procedural learning, composite rewards |
-| Phase 7 | 🚧 In Progress | Attention controller (drift detection live), salience network |
-| Phase 8 | 📋 Planned | Predictive coding, episodic future thinking |
-
-Detailed progress notes, neuroscience references, and decision logs are in `completebrainplan.md`.
+- `architecture.md` is the audited description of implemented behavior and known boundaries.
+- `roadmap.md` is the canonical plan and delivery tracker for the local-first ECA.
 
 ---
 
@@ -208,9 +202,9 @@ Detailed progress notes, neuroscience references, and decision logs are in `comp
 
 - **Cold start**: Bob needs 2-3 interactions to "warm up" after downtime as Working Memory populates
 - **Single-user optimization**: RL and habits are per-user; cross-user generalization not yet implemented
-- **LLM dependency**: Cognitive quality bounded by underlying Gemini model capabilities
-- **Consolidation latency**: Memory consolidation runs every 30 minutes (not real-time)
-- **Web scraping**: Some sites block non-browser traffic; graceful fallback to search snippets
+- **LLM dependency**: Current code is Gemini-specific; the roadmap migrates routine cognition to local Ollama providers.
+- **Consolidation scheduling**: The service exists, but its periodic loop is not wired into application startup.
+- **Research retrieval**: Direct web browsing is being replaced by explicit cloud research escalation.
 
 ---
 
@@ -235,8 +229,8 @@ If you use ECA in your research, please cite:
 
 ### Key Documentation
 
-- `architecture.md` - Comprehensive technical design with brain-region mappings
-- `completebrainplan.md` - Detailed roadmap with neuroscience references and implementation notes
+- `architecture.md` - Audited system design, implementation status, and brain-region mappings
+- `roadmap.md` - Local-first architecture migration and ECA delivery plan
 
 ---
 

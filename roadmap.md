@@ -1,0 +1,307 @@
+# ECA Local-First Roadmap
+
+**Status:** Canonical planning and tracking document, August 2026
+
+`architecture.md` records what is implemented. This document is the only active plan for future work. The viable work from the original brain and memory plans has been consolidated here.
+
+## Tracker Conventions
+
+- **Implemented:** Code exists and is wired into a runtime path.
+- **Validated:** Implemented behavior has acceptance tests or measured evidence.
+- **Planned:** Approved work that has not yet been implemented.
+- **Deferred:** Deliberately outside the current path; revisit only after its prerequisite evidence exists.
+
+Do not mark a capability validated merely because its service class exists. Learning, retrieval, and routing claims require a fixture suite and measured baseline.
+
+## Direction
+
+Run the normal cognitive cycle locally through Ollama, using a capable local multimodal model for chat, image understanding, audio understanding where supported, agent analysis, and final synthesis. Reserve cloud inference for explicit research escalation: the Discovery/Curiosity path may call a configurable cloud model when local knowledge is insufficient or current external information is required.
+
+This is a good fit for ECA. It makes the persistent memory and cognitive orchestration inexpensive to run, keeps routine conversations private, and makes every cloud call intentional and inspectable.
+
+The existing implementation does not support this split yet. `LLMIntegrationService` is Gemini-specific and is used by agents, embeddings, moderation, audio processing, memory services, and final synthesis. A provider boundary must come before any model replacement.
+
+## Target Architecture
+
+```
+User input
+    |
+    v
+Local multimodal provider (Ollama)
+    |- routine chat and final synthesis
+    |- Stage 1 and Stage 2 agents
+    |- local image/audio analysis when the selected model supports it
+    |- local safety/classification where feasible
+    |
+    v
+Memory and orchestration (local)
+    |- ChromaDB and local embeddings
+    |- working memory, conflict checks, learning, metrics
+    |
+    v
+Research escalation policy
+    |- no escalation: use local answer
+    |- web/current-information need: cloud research provider
+    |- return sources and compact findings to local synthesis
+```
+
+Cloud research is a capability, not the default model. The local final synthesizer should receive only a bounded research packet: question, answer, source URLs, timestamps, confidence, and any uncertainty.
+
+## Principles
+
+- **Local by default:** Ordinary conversation, memory access, agent reasoning, and final response generation do not require a cloud API.
+- **Explicit escalation:** A policy makes cloud calls based on need for current information, task difficulty, local failure, or user request; it records why the call happened.
+- **Capability-driven routing:** Audio, image, embeddings, tool use, JSON mode, and moderation are model/provider capabilities, not assumptions tied to a model name.
+- **Provider-neutral configuration:** Ollama, Gemini, and later providers are selected by configuration rather than direct imports in agents.
+- **Bounded context:** Continue limiting raw transcript and agent output sizes before sending anything to a provider.
+- **Preserve local state:** ChromaDB, logs, metrics, and user memory remain local. Cloud requests contain the minimum necessary context.
+
+## Phase 0: Establish a Runnable Baseline
+
+**Goal:** Make current behavior observable before changing model infrastructure.
+
+1. Replace placeholder values in `.env` with real local credentials.
+2. Repair test collection:
+   - Fix the syntax error in `tests/test_llm_integration_service.py`.
+   - Remove or rewrite the stale MongoDB test setup in `tests/test_memory_service.py` for ChromaDB.
+3. Add a minimal startup smoke test using fake/local providers so tests do not require real API keys.
+4. Add one end-to-end mocked cognitive-cycle test covering Stage 1, Stage 2, final synthesis, and memory persistence.
+5. Record baseline metrics for local hardware: cold start, latency per agent, peak RAM/VRAM, requests per minute, and failure rate.
+
+**Exit criteria:** `pytest` collects and passes with no real cloud credentials; a documented baseline exists.
+
+## Phase 1: Introduce an LLM Provider Boundary
+
+**Goal:** Decouple ECA services from Gemini.
+
+1. Define provider protocols/interfaces:
+   - `ChatProvider.generate(...)`
+   - `MultimodalProvider.generate(..., image, audio)`
+   - `EmbeddingProvider.embed(text)`
+   - `SafetyProvider.assess(content)`
+   - `ResearchProvider.research(query, context)`
+2. Replace direct `LLMIntegrationService` usage with a provider facade injected through application startup.
+3. Keep `GeminiProvider` as the first adapter so existing cloud behavior stays available during migration.
+4. Add provider capabilities such as `supports_images`, `supports_audio`, `supports_embeddings`, `supports_structured_output`, `supports_tools`, and `is_local`.
+5. Use an explicit structured-output parser/repair boundary. Local models may not consistently return the JSON currently expected by agents.
+6. Keep retry, concurrency, timeout, context-size, and audit logging at the provider facade rather than inside a specific provider.
+
+**Exit criteria:** The app can run unchanged with a configured Gemini adapter, while no agent imports a Gemini SDK or hardcodes a Gemini model name.
+
+## Phase 2: Add Ollama as the Local Default
+
+**Goal:** Run text reasoning locally before enabling multimodal paths.
+
+1. Add an `OllamaProvider` using the Ollama HTTP API.
+2. Configure local defaults:
+   - `LLM_PROVIDER=ollama`
+   - `OLLAMA_BASE_URL=http://localhost:11434`
+   - `OLLAMA_CHAT_MODEL=<verified-local-model>`
+   - model-specific context and output limits
+3. Route all routine agent calls and `CognitiveBrain` synthesis through the local chat provider.
+4. Add health checks for Ollama availability and installed model presence.
+5. Add a provider fallback policy: fail clearly for normal local requests; never silently send private context to a cloud provider.
+6. Benchmark the full cycle and tune agent activation, token budgets, concurrency, and context trimming for the available hardware.
+
+**Exit criteria:** A text-only `/chat` cycle completes locally with no Gemini API calls, and the provider used is visible in cycle metadata and logs.
+
+## Phase 3: Separate Embeddings and Memory Retrieval
+
+**Goal:** Remove the remaining cloud dependency from persistent memory.
+
+1. Add a local embedding provider, preferably a dedicated embedding model supported by Ollama or another local embedding runtime.
+2. Store embedding provider/model/version/dimension in ChromaDB collection metadata.
+3. Create a migration command that rebuilds embeddings into a new collection rather than mixing vector spaces in the current collection.
+4. Compare retrieval quality against the existing Gemini embeddings with a small curated memory-query fixture set.
+5. Switch `MemoryService`, summaries, and retrieval to the local embedding provider only after quality and dimensional compatibility are verified.
+
+**Exit criteria:** Memory ingestion and retrieval work with no cloud embedding call, and legacy vector collections remain recoverable.
+
+## Phase 4: Enable Multimodal Capability Safely
+
+**Goal:** Use the selected Ollama model for image/audio only after verifying actual support.
+
+1. Verify the exact Ollama model tag and its declared capabilities. Do not assume `gemma-4-E4B-it` supports image or audio solely from its name; confirm what Ollama reports and test it with known fixtures.
+2. Add model-capability probes at startup and expose their results through `/health/deep`.
+3. Wire `VisualInputProcessor` into the cognitive cycle only when the active provider supports images.
+4. Keep audio as a separate capability:
+   - If the local model accepts audio, implement an audio provider adapter.
+   - Otherwise use a local speech-to-text engine first, then pass the transcript to the local chat model.
+5. Preserve MIME type, file size, duration, and provenance metadata. Enforce local limits before base64 content enters a prompt.
+6. Add image and audio fixture tests for success, unsupported capability, invalid MIME type, oversized input, and provider failure.
+
+**Exit criteria:** Image and audio paths are either locally functional with tested models or cleanly marked unavailable; no hidden Gemini fallback exists.
+
+## Phase 5: Replace Web Browsing With Cloud Research Escalation
+
+**Goal:** Make Discovery the only cloud-capable node by policy.
+
+1. Replace `WebBrowsingService` with a `ResearchService` that has pluggable strategies:
+   - `CloudResearchProvider` for a cloud LLM with grounded search/retrieval capability.
+   - Optional future direct-search adapter when source-level control is needed.
+2. Add an `EscalationPolicy` used by `DiscoveryAgent` and `MetaCognitiveMonitor`. Initial reasons:
+   - current or time-sensitive information
+   - explicit user request to research/search the web
+   - local confidence below a configured threshold
+   - named fact that is absent from local memory
+3. Require a local policy decision before cloud contact and record: request ID, reason, provider, model, timestamp, token/context size, source list, and cost estimate if available.
+4. Minimize cloud context. Send the question and a compact, redacted local summary, not full transcripts or raw memory by default.
+5. Return a structured research packet with claims, sources, publication/access dates, confidence, and caveats. Have the local Cognitive Brain synthesize the user-facing answer.
+6. Make the cloud provider configurable, for example `RESEARCH_PROVIDER=gemini`, `RESEARCH_MODEL=<verified-model-name>`, so Gemini Flash can be used now without making it a permanent architectural dependency.
+
+**Exit criteria:** A normal local chat does not call the cloud; a research-required query produces an auditable cloud research packet and a locally synthesized response with sources.
+
+## Phase 6: Local Safety, Observability, and Operations
+
+**Goal:** Operate the hybrid architecture predictably.
+
+1. Separate content safety from the chat provider. Start with simple local policy checks and make any cloud moderation an explicit opt-in escalation.
+2. Add provider-level metrics: selected provider/model, local/cloud ratio, latency, failure class, context size, escalation reason, and estimated cloud usage.
+3. Extend dashboard streaming only after the current snapshot-only WebSocket is replaced with a real subscription/broadcast mechanism.
+4. Add a local-only mode that rejects all cloud escalation, plus a research-enabled mode that requires an explicit configuration flag.
+5. Start the memory-consolidation scheduler deliberately, with an enable flag, lifecycle ownership, and tests. Keep it local unless a specific consolidation job explicitly requires research.
+6. Add CI checks for tests, type checking, frontend build, `.env.example` completeness, and provider contract tests.
+
+**Exit criteria:** Local-only mode is enforceable and tested; hybrid activity is observable; background services have explicit lifecycle management.
+
+## Phase 7: Memory Reliability and Evaluation
+
+**Goal:** Make the existing STM, summary, LTM, and consolidation design reliable with local models and measurable retrieval quality.
+
+**Current status:** Implemented in parts, not yet validated end-to-end. STM, summary, ChromaDB storage, and the consolidation service exist. Periodic consolidation scheduling, cleanup policy, recovery verification, and evaluation evidence are incomplete.
+
+1. Make all memory budgets model-neutral. Derive STM/context reserves from active provider capabilities instead of Gemini-specific limits.
+2. Create a versioned memory evaluation fixture: at least 50 queries, known relevant cycle IDs, time-sensitive cases, and expected summary facts.
+3. Measure local embedding retrieval with top-$k$ recall, MRR, and NDCG before switching any collection. Define an acceptable quality delta before migration.
+4. Preserve provenance: summaries and semantic memories must retain source cycle IDs, generation provider/model, timestamps, and embedding version.
+5. Add per-user locking and fault-injection tests for summary-before-flush, failed upserts, and interrupted recovery.
+6. Add a deliberate STM cleanup and snapshot policy: retention bounds, recovery age limits, periodic snapshots, and no silent data deletion.
+7. Start the consolidation scheduler only behind an enable flag, with one lifecycle owner, task de-duplication, cooldowns, and a shutdown test.
+8. Record memory metrics: retrieval latency, hit source (STM/summary/LTM), flush reason, token counts before/after, summary failures, and consolidation outcome.
+9. Repair and test the consolidation service contract before scheduling it: implement or replace its missing `MemoryService.get_user_cycles()` dependency and pass both `user_id` and `cycle_id` to `get_cycle_by_id()`.
+10. Verify the episodic-to-semantic extraction path has a persistent destination and a retrieval path before presenting semantic memories as available to CognitiveBrain.
+11. Test summary identity extraction on diverse inputs and treat regex matching as a fallback heuristic, not a durable identity system.
+
+**Exit criteria:** Local memory retrieval has a documented quality baseline; summary/flush/recovery paths are covered by integration tests; consolidation runs only when explicitly enabled and leaves an audit record.
+
+## Phase 8: Validate Learning and Metacognition
+
+**Goal:** Turn the existing RL, procedural-learning, Theory-of-Mind, and meta-cognitive services from plausible mechanisms into measured capabilities.
+
+**Current status:** Implemented with provisional signals; not validated as learning systems. The existing single-user setup is appropriate for initial experiments, but conclusions require repeatable evaluation.
+
+1. Define a small evaluation corpus for factual uncertainty, ambiguous requests, emotional support, technical explanation, and research-required queries.
+2. Measure meta-cognitive calibration: answer accuracy, confidence calibration, correct abstentions, unnecessary abstentions, and research-escalation precision/recall.
+3. Define outcome labels before changing rewards. Start with explicit thumbs up/down or review fixtures; treat sentiment and conversation length as weak proxy signals.
+4. Add deterministic replay tests for RL updates, Q-value persistence, strategy selection, and habit-formation thresholds.
+5. Add procedural-learning tests that attribute a failure to a documented skill category and verify a sequence recommendation changes only with sufficient evidence.
+6. Verify Theory-of-Mind prediction validation is written and measured per cycle; track prediction coverage and accuracy separately from response quality.
+7. Keep global learning disabled until user isolation, consent, and evaluation methodology exist. Local single-user learning remains the default experiment.
+
+**Exit criteria:** Each learning claim has a metric, a baseline, and a repeatable evaluation; no dashboard or architecture claim implies demonstrated improvement without that evidence.
+
+## Phase 9: Attention and Salience
+
+**Goal:** Complete the focus-control loop without coupling it to a particular model provider.
+
+### 9.1 Attention Controller General Availability
+
+**Current status:** Implemented, default disabled/shadow mode.
+
+1. Build synthetic fixtures for topic shifts, emotional shifts, urgency spikes, and stable conversations.
+2. Define drift labels and evaluate precision, recall, and latency overhead. Tune thresholds from results rather than adopting an unverified percentage target.
+3. Run a bounded shadow period, compare proposed routing with baseline routing, and inspect false suppressions before enabling control.
+4. Record whether routing changes improve latency, response quality, or downstream reward. Do not feed attention outcomes into learning services until that attribution is validated.
+
+**Exit criteria:** Active routing is opt-in, regression-tested, and supported by measured improvement over shadow-mode baseline.
+
+### 9.2 Salience Network
+
+**Current status:** Planned; no implementation exists.
+
+1. Add an advisory-only memory ranking service after retrieval, using query relevance, recency, emotional salience, novelty, and must-keep flags.
+2. Return top-$k$ candidates with scores and reasons; preserve the full candidate list for audit and evaluation.
+3. Pass concise memory and response-priority hints to Working Memory and Cognitive Brain rather than raw large retrieval sets.
+4. Compare advisory rankings with baseline retrieval on the memory fixture set before allowing pruning.
+5. Add user-facing outcome measures for focus and conciseness, not just reduced context size.
+
+**Exit criteria:** Salience pruning demonstrably retains required memories and improves focus without degrading retrieval quality.
+
+## Phase 10: Govern Autonomous Work
+
+**Goal:** Make reflection, discovery, self-assessment, curiosity, proactive engagement, and consolidation safe background capabilities rather than incidental tasks.
+
+**Current status:** `DecisionEngine` and `BackgroundTaskQueue` exist, but autonomous behavior needs explicit scheduling, de-duplication, auditing, and evaluation.
+
+1. Document every signal source and trigger policy: reflection, discovery, self-assessment, curiosity, STM pressure, summary updates, and consolidation candidates.
+2. Define a task contract with user ID, trigger reason, input metrics snapshot, cooldown, de-duplication key, provider policy, and completion result.
+3. Add per-task rate limits, cancellation, retries, and idempotency; no autonomous task may silently create an unbounded loop.
+4. Apply the research escalation policy to autonomous discovery. A background task may not contact the cloud in local-only mode.
+5. Add audit views and integration tests for trigger thresholds, cooldowns, task failure, shutdown, and duplicate events.
+6. Keep proactive messages opt-in and measure negative reactions before expanding their frequency.
+
+**Exit criteria:** Autonomous work is bounded, explainable, observable, and respects local-only/provider privacy policy.
+
+## Phase 11: Predictive Cognition Experiments
+
+**Goal:** Explore anticipation only after memory, learning, and attention have reliable measurements.
+
+**Status:** Planned research work, not a product commitment.
+
+1. Start with a small, interpretable next-intent or topic-transition baseline rather than a learned world model.
+2. Track prediction accuracy, calibration, and whether prefetching context reduces latency without increasing irrelevant retrieval.
+3. Use prediction errors as evaluation data first; do not let predictions change user-facing behavior automatically.
+4. Consider episodic future simulation and affective forecasting only after simple prediction demonstrates value and safety.
+
+**Exit criteria:** Prediction has measurable value beyond the existing Theory-of-Mind heuristics; otherwise retain it as an experiment.
+
+## Explicitly Deferred
+
+- Simulated “interoception” or claims that the system feels tired. Use resource metrics and backpressure instead.
+- Specialized hippocampal pattern-separation work beyond improving retrieval evaluation and metadata. Revisit only if measured retrieval failures justify it.
+- Reputation modeling as a separate social subsystem. Existing emotional memory and Theory of Mind should be evaluated first.
+- Deep-RL, sequence models, and autonomous cloud activity. These are not justified until the simpler measurable systems above are validated.
+
+## Suggested Configuration Shape
+
+```dotenv
+# Default cognitive provider
+LLM_PROVIDER=ollama
+OLLAMA_BASE_URL=http://localhost:11434
+OLLAMA_CHAT_MODEL=<verified-local-model>
+
+# Local embeddings
+EMBEDDING_PROVIDER=ollama
+OLLAMA_EMBEDDING_MODEL=<verified-embedding-model>
+
+# Explicit research escalation
+RESEARCH_ENABLED=true
+RESEARCH_PROVIDER=gemini
+RESEARCH_MODEL=<verified-cloud-model>
+RESEARCH_ALLOW_LOCAL_CONTEXT=false
+
+# Privacy and operating modes
+LOCAL_ONLY_MODE=false
+MAX_CLOUD_CONTEXT_CHARS=12000
+```
+
+These names are proposed, not implemented. Add them only with the provider facade in Phase 1.
+
+## Decisions to Make Before Phase 1
+
+1. Confirm the exact Ollama model tag, size, quantization, and available hardware RAM/VRAM.
+2. Verify whether that model accepts images, audio, or only text in the installed Ollama release.
+3. Pick a local embedding model separately from the chat model.
+4. Decide whether cloud research is allowed automatically by policy or only after user confirmation.
+5. Choose the privacy boundary for cloud escalation: no local context, compact summary only, or user-approved selected memories.
+6. Confirm the current Google model identifier from the provider console/API rather than baking a label such as “Flash 3.5” into code.
+
+## Current Execution Order
+
+1. Phase 0: repair test collection and establish runtime baselines.
+2. Phase 1 and Phase 2: add provider boundary, Gemini compatibility adapter, and Ollama health/model probe; then move routine text processing local.
+3. Phase 3 and Phase 7: migrate embeddings safely and establish memory retrieval/recovery evidence.
+4. Phase 5 and Phase 6: introduce controlled cloud research escalation, local-only enforcement, and hybrid observability.
+5. Phase 8 through Phase 10: validate existing learning, attention, salience, and autonomous task mechanisms before adding predictive cognition.
+
+The first implementation slice remains: fix test collection, introduce provider interfaces with a Gemini adapter, and add an Ollama health/model probe without switching routine routing. This tells us what the downloaded model can actually do before it is asked to carry the cognitive loop.

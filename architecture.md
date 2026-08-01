@@ -1,9 +1,26 @@
 
 # Emergent Cognitive Architecture (ECA) - Complete Architecture Documentation
 
-**Last Updated:** November 9, 2025
+**Last Updated:** August 1, 2026
 
-This document is the **single source of truth** for the Emergent Cognitive Architecture (ECA), a brain-inspired multi-agent system designed for sophisticated, human-like interaction, continuous learning, and genuine cognitive continuity.
+This document describes the Emergent Cognitive Architecture (ECA), a brain-inspired multi-agent system designed for sophisticated, human-like interaction, continuous learning, and cognitive continuity. The code is the authoritative record of runtime behavior; the status below separates implemented behavior from partial or planned work.
+
+## Implementation Status (Code Audit: August 1, 2026)
+
+The backend is a local, single-user research prototype. A valid API key always maps to the fixed `SYSTEM_USER_ID` in `src/dependencies.py`, so per-user behavior is not available to multiple distinct users yet.
+
+| Area | Current status | Evidence / boundary |
+| --- | --- | --- |
+| Cognitive cycle | Implemented | `main.py` wires FastAPI to `OrchestrationService`; the orchestrator runs selective Stage 1 and Stage 2 agents, conflict checks, final synthesis, and ChromaDB-backed memory storage. |
+| Memory, self-model, ToM, RL, procedural learning | Implemented with graceful-degradation paths | Services are instantiated and invoked from the cycle. Failures in optional enrichment paths are logged and the cycle continues. |
+| Attention controller | Implemented, default inactive | It uses lightweight heuristics. It emits directives before Stage 1 and after Stage 1; routing changes only when `ATTENTION_CONTROLLER_ENABLED=true` and `ATTENTION_CONTROLLER_SHADOW_MODE=false`. |
+| Memory consolidation | Implemented service, not automatically scheduled | `MemoryConsolidationService` can create and execute jobs, but app startup does not start a periodic 30-minute loop or enqueue jobs automatically. |
+| Metrics/dashboard | Partial | REST metrics and research endpoints exist. Metrics ChromaDB initialization is asynchronous and not awaited at startup. The WebSocket sends an initial snapshot then waits for client messages; broadcast updates are not implemented. |
+| Multimodal input | Partial | Audio transcription is wired into the cycle. `VisualInputProcessor` exists but is not wired into application startup or the cognitive cycle. |
+| Salience network | Planned | There is a feature flag only; no `SalienceNetwork` implementation is present. |
+| Validation | Currently broken | The Python suite has a syntax error in `tests/test_llm_integration_service.py`, and `tests/test_memory_service.py` still imports MongoDB despite the ChromaDB implementation. |
+
+The phase sections below retain the design intent. Treat statements about autonomous background execution, measured performance improvements, or real-time streaming as planned unless this status section explicitly marks them implemented.
 
 ## Table of Contents
 
@@ -149,7 +166,7 @@ The ECA is a full-stack application with a **React/TypeScript frontend** and a *
 
 *   **Self-Awareness and Continuity:** SelfModel maintains identity, autobiographical memories, and relationship tracking across sessions (inspired by the default mode network).
 
-*   **Safety and Security:** Multiple safety layers including content moderation, secure API key handling, rate limiting, and graceful degradation.
+*   **Safety and Security:** `/chat` performs input moderation and API-key authentication for local use. Rate limiting and separate final-output moderation are not implemented.
 
 *   **Observability:** Comprehensive structured logging, performance metrics, and audit trails for all cognitive operations and autonomous events.
 
@@ -236,7 +253,7 @@ The backend is a FastAPI application serving a RESTful API for the frontend.
 
 The ECA explicitly maps cognitive services to specific brain regions and mechanisms identified in neuroscience research. This brain-inspired design creates emergent intelligence through the interaction of specialized subsystems.
 
-### Phase 1: Core Self-Awareness & Working Memory ✅ COMPLETED
+### Phase 1: Core Self-Awareness & Working Memory (Implemented)
 
 **Neuroscience Basis:** Default Mode Network (DMN), Prefrontal Cortex (PFC), Amygdala
 
@@ -316,7 +333,7 @@ class WorkingMemoryContext:
 
 ---
 
-### Phase 2: Selective Attention & Coherence ✅ COMPLETED
+### Phase 2: Selective Attention & Coherence (Implemented)
 
 **Neuroscience Basis:** Thalamus, Anterior Cingulate Cortex (ACC), Hippocampus
 
@@ -412,7 +429,7 @@ class WorkingMemoryContext:
 
 ---
 
-### Phase 3: Autobiographical Memory & Theory of Mind ✅ COMPLETED
+### Phase 3: Autobiographical Memory & Theory of Mind (Implemented)
 
 **Neuroscience Basis:** Hippocampus (full episodic/semantic separation), Sleep Consolidation, Mentalizing Network
 
@@ -586,7 +603,7 @@ After each user interaction:
 
 ---
 
-### Phase 4: Higher-Order Executive Functions (The Agents) ✅ COMPLETED
+### Phase 4: Higher-Order Executive Functions (The Agents) (Implemented)
 
 **Neuroscience Basis:** Dorsolateral Prefrontal Cortex (Planning), Default Mode Network (Creativity), Orbitofrontal Cortex (Value Judgment), Anterior Prefrontal Cortex (Meta-cognition)
 
@@ -773,7 +790,7 @@ AgentOutput(
 
 **Impact:** Enables the system to acquire new knowledge dynamically rather than being limited to training data.
 
-### Phase 5: Metacognition & Self-Reflection ✅ COMPLETED
+### Phase 5: Metacognition & Self-Reflection (Implemented with fallbacks)
 
 **Brain Region:** Prefrontal Cortex (PFC) - executive control, self-monitoring, error detection
 
@@ -866,7 +883,7 @@ conflict_types = {
 - **ReinforcementLearningService**: Strategy selection for conflict resolution
 - **CognitiveBrain**: Receives conflict-free agent outputs for synthesis
 
-### Phase 6: Learning Systems (Reinforcement & Procedural) ✅ COMPLETED
+### Phase 6: Learning Systems (Reinforcement & Procedural) (Implemented with limited feedback signals)
 
 **Brain Regions:** Basal Ganglia (Reinforcement Learning) + Cerebellum (Procedural Learning)
 
@@ -980,26 +997,25 @@ performance_data = {
 
 #### **AttentionController (Phase 7 Shadow Mode)**
 
-**Purpose:** Newly introduced thalamus/anterior cingulate hybrid layer (currently running in feature-flagged shadow mode) that evaluates conversation drift, emotional load, and agent performance, then emits inhibitory/excitatory directives so only the most relevant agents fire.
+**Purpose:** Feature-flagged thalamus/anterior cingulate-inspired heuristic layer. It compares working-memory snapshots for drift and emits directives that may bias agent activation and memory configuration. It defaults to disabled/shadow mode.
 
 **Inputs:**
-- Stage 1 agent telemetry (`perception`, `emotional`, `memory`) including confidence, novelty, and latency metrics
-- WorkingMemory snapshots (topics, entities, inferred goals) with per-user history stored for drift comparison
-- ConflictMonitor deltas and ReinforcementLearning strategy guidance
-- Emotional load indicators (trust delta, sentiment volatility)
+- `ThalamusGateway` quick analysis and initial agent activation map
+- Working-memory snapshots before Stage 1 and after Stage 1, retained in-process per user for drift comparison
+- The post-Stage-1 `ConflictMonitor` report
 
 **Outputs:**
-- `AttentionDirective` objects applied by `ThalamusGateway` describing agent activation bias, memory depth adjustments, urgency modifiers, and per-stage drift scores
-- `attention_motifs` persisted in Working Memory so downstream agents know the prioritized threads
-- Structured telemetry (`attention_salience_trace` + `attention_directive` metrics) streamed to Metrics/RL/Procedural learning services
+- `AttentionDirective` objects describing activation bias, optional memory configuration overrides, and drift scores
+- `attention_motifs` added to the in-memory working-memory context when derived
+- `ATTENTION_DIRECTIVE` metrics when `MetricsService` is available
 
 **Data Flow:**
-1. OrchestrationService gathers Stage 1 metrics and Working Memory snapshot.
-2. AttentionController scores drift vs. prior cycle, runs inhibitory rules (e.g., suppress CreativeAgent during crisis), and calculates excitation levels.
-3. ThalamusGateway consumes the directive before dispatching Stage 2 agents, shrinking/expanding their token budgets accordingly.
-4. Directive + resulting agent outputs are logged so RL can learn which attention patterns improved rewards.
+1. OrchestrationService requests a directive before Stage 1, using quick analysis and any prior working-memory snapshot.
+2. After Stage 1, it updates Working Memory and requests a second directive using the conflict report.
+3. When active rather than shadowed, the directive adjusts the routing map and memory configuration before Stage 2.
+4. Directives are retained in cycle metadata and optionally recorded as metrics. They are not currently used as an RL or procedural-learning reward signal.
 
-**Telemetry & Testing Plan:**
+**Planned Telemetry & Testing:**
 - Shadow-mode tracing for 1k cycles (controller logs decisions but does not alter routing) to validate accuracy and safety.
 - Synthetic drift/urgency suites to confirm ≥90% correct routing adjustments and <5% latency overhead.
 - Dashboard panels for drift detection accuracy, inhibition counts, and latency impact; alerts if suppression repeatedly hurts rewards.
@@ -1038,18 +1054,44 @@ performance_data = {
 
 ## Memory System Architecture
 
-The ECA implements a sophisticated three-tier memory system inspired by human memory hierarchies, with token-aware management and autonomous consolidation.
+The ECA implements a local, three-tier memory design inspired by human memory hierarchies. The runtime source of truth is `MemoryService`, `SummaryManager`, and the ChromaDB collections they manage. The section below distinguishes the active paths from services that exist but are not yet scheduled or verified.
+
+### Memory Runtime Status
+
+| Layer or path | Current behavior | Boundary / limitation |
+| --- | --- | --- |
+| Immediate transcript | In-process, per-user rolling verbatim buffer of user and assistant turns; bounded by `IMMEDIATE_TOKEN_BUDGET` (default 50,000 estimated tokens). | Not persistent, not shared across processes, and cleared on restart. |
+| Short-term memory | In-process, per-user `ShortTermMemory` cache of full `CognitiveCycle` objects, newest first; default budget is 25,000 estimated tokens. | Per-field embeddings are attempted but optional. Without them, STM semantic recall returns fewer or no matches. |
+| Conversation summary | One active summary per user, updated during each `upsert_cycle`; stores topics, entities, context points, preferences, and identity hints. | Summary generation and embedding failures are logged and do not stop the conversation. A summary may therefore be stale or unembedded. |
+| Long-term memory | ChromaDB persists full cycle JSON plus supplied vector embeddings, compact documents, and metadata. Patterns are stored separately. | Chroma retrieval order is normalized in application code; it is not a database ordering guarantee. |
+| Memory query | Query embedding, then STM cosine search, then Chroma vector search; results are merged and ranked by score. Default threshold is 0.5. | Relevance thresholds and distance conversion are heuristics and have not been evaluated against a labelled retrieval set. |
+| STM flush | On token pressure, the service summarizes selected cycles, upserts them to LTM, then removes them from STM. | Signal emission is conditional on `DecisionEngine` wiring. Failure of the flush raises an API error; automatic retry/recovery is incomplete. |
+| Episodic/semantic consolidation | `MemoryConsolidationService` can create jobs for episodic-to-semantic conversion, replay, and pattern extraction. | No periodic job loop is started by application startup. The currently implemented service has incompatible `MemoryService` calls that must be repaired before it can be relied upon. |
+
+### Operational Memory Flow
+
+```text
+Cycle completed
+  -> attempt per-field embeddings (non-fatal)
+  -> append user/assistant turns to immediate transcript
+  -> add full cycle to token-bounded STM
+  -> update conversation summary (non-fatal)
+  -> upsert full cycle to ChromaDB LTM
+  -> on STM pressure: summarize selected cycles, ensure LTM upsert, then remove from STM
+```
+
+The immediate transcript is supplied to `CognitiveBrain` as literal recent context. Summary and semantically retrieved cycles supply longer-running context. These are complementary paths, not a guarantee that every prior turn is placed in every prompt.
 
 ### Memory Hierarchy Overview
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │  SHORT-TERM MEMORY (STM) - In-Memory Token-Limited Buffer   │
-│  • 25k-50k tokens (configurable for Gemini 250k limit)      │
+│  • Default 25k estimated tokens (configuration-driven)      │
 │  • Immediate conversation context                            │
 │  • Per-user circular buffer                                  │
-│  • Automatic flush when budget exceeded                      │
-│  • Persistence/recovery on restart                           │
+│  • Flush path on budget exceeded                             │
+│  • Snapshot recovery is implemented but not yet validated    │
 └──────────────────────────┬──────────────────────────────────┘
                            │ (Summary triggered on flush)
 ┌──────────────────────────▼──────────────────────────────────┐
@@ -1057,14 +1099,13 @@ The ECA implements a sophisticated three-tier memory system inspired by human me
 │  • Condensed conversation context                            │
 │  • Key topics, entities, preferences                         │
 │  • ChromaDB storage with embeddings                          │
-│  • Semantic search enabled                                   │
+│  • Summary embedding is attempted, but may be unavailable    │
 │  • Incremental updates                                       │
 └──────────────────────────┬──────────────────────────────────┘
                            │ (Consolidation)
 ┌──────────────────────────▼──────────────────────────────────┐
 │  LONG-TERM MEMORY (LTM) - Persistent ChromaDB Storage       │
-│  • Episodic memories (narrative episodes)                    │
-│  • Semantic memories (extracted concepts)                    │
+│  • Episodic/semantic services exist; scheduling is unwired   │
 │  • Cognitive cycles (full interaction history)               │
 │  • Emotional profiles                                        │
 │  • Self-models                                               │
@@ -1079,11 +1120,11 @@ The ECA implements a sophisticated three-tier memory system inspired by human me
 **Purpose:** Hold recent interactions in a token-limited buffer for immediate access (mimics human working memory capacity)
 
 **Key Features:**
-- **Token-aware management**: Configurable budget (25k–50k tokens for Gemini)
+- **Token-aware management**: Default 25k-token budget, currently independent of the active provider's verified context window
 - **Circular buffer**: Fixed-size per-user (default 10 cycles, but token-limited)
 - **Fast access**: No vector search overhead
-- **Automatic flush**: Triggers summarization when budget exceeded
-- **Persistence**: Save/load snapshots for crash recovery
+- **Flush path**: Selects cycles for summarization and LTM persistence when the budget is exceeded
+- **Persistence/recovery**: Snapshot save/load code exists; recovery behavior requires end-to-end validation
 - **Async-safe**: Per-user locks prevent race conditions
 
 **Token Budget Logic:**
@@ -1105,7 +1146,7 @@ if token_count_current > STM_TOKEN_BUDGET:
 - Recovery validation: Age check, token recomputation, cycle integrity
 - Automatic re-summarization if budget exceeded on recovery
 
-**Impact:** Token-limited STM prevents accidental context truncation and aligns memory management with LLM input constraints.
+**Impact:** Token-limited STM bounds local context. Its current budgets were chosen during Gemini development and must be recalibrated for the configured local provider.
 
 ### Summary Memory
 
@@ -1114,10 +1155,10 @@ if token_count_current > STM_TOKEN_BUDGET:
 **Purpose:** Maintain condensed representation of conversation context with semantic search
 
 **Key Features:**
-- **LLM-generated summaries**: Rich context extraction via Gemini
+- **LLM-generated summaries**: Rich context extraction via the configured LLM service
 - **Incremental updates**: Efficient updates without full regeneration
 - **ChromaDB storage**: `summaries_collection` with embeddings
-- **Semantic search**: Query by relevance, not just recency
+- **Semantic retrieval support**: Summaries are stored with an embedding when generation succeeds
 - **Key topics tracking**: Automatic topic extraction
 - **User preferences**: Pattern recognition in interactions
 - **Conversation state**: Current context and flow
@@ -1152,7 +1193,7 @@ class ConversationSummary:
     conversation_state: str
 ```
 
-**Impact:** Summaries preserve semantic fidelity when consolidating from STM to LTM, preventing information loss.
+**Impact:** Summaries compact recurring context. They are best-effort enrichment, not a lossless or guaranteed persistence mechanism.
 
 ### Long-Term Memory (LTM)
 
@@ -1161,25 +1202,23 @@ class ConversationSummary:
 **Purpose:** Persistent storage of all interactions and derived knowledge
 
 **ChromaDB Collections:**
-1. **`memory_cycles`**: Full cognitive cycles with embeddings
+1. **`cognitive_cycles`**: Full cognitive cycles with supplied embeddings
 2. **`episodic_memories`**: Narrative-based significant episodes
 3. **`semantic_memories`**: Extracted concepts and facts
 4. **`emotional_profiles`**: User emotional intelligence tracking
 5. **`self_models`**: System identity and autobiographical data
 6. **`summaries`**: Conversation summaries
 
-**Memory Consolidation Flow:**
+**Implemented STM Flush Flow:**
 ```
 STM (token limit exceeded)
   ↓
 Summary Generation (LLM analyzes cycles)
   ↓
-Episodic Memory Creation (significant events → narratives)
-  ↓
-Semantic Concept Extraction (patterns → facts)
-  ↓
-LTM Storage (ChromaDB with rich metadata)
+LTM Storage (full cycles plus a consolidated STM record)
 ```
+
+Episodic narrative creation, semantic extraction, replay, and pattern extraction are implemented as explicit consolidation jobs. They do not run automatically until their scheduler and service contracts are repaired.
 
 **Consolidation Priority Calculation:**
 ```python
@@ -1191,16 +1230,14 @@ priority = 0.5  # baseline
 + 0.15 if contains_insights
 ```
 
-**Memory Retrieval Priority:**
+**Memory Retrieval Path:**
 1. **STM first**: Check in-memory buffer (fast, recent)
-2. **Summary next**: Check consolidated context (medium speed, semantic)
-3. **LTM last**: Vector search ChromaDB (slower, comprehensive)
+2. **LTM second**: Vector search ChromaDB, then merge and rank results
+3. **Summary separately**: CognitiveBrain loads the current summary for synthesis; `query_memory()` does not currently rank summary documents alongside cycle results
 
-**Summary-Referenced Memory Boost:**
-- Memories referenced in summaries get 20% relevance boost
-- Reason: Summaries indicate importance, should be prioritized
+**Scoring note:** STM uses cosine similarity against optional per-field embeddings. LTM converts Chroma distances to a heuristic $[0, 1]$ score. The default relevance threshold is 0.5; neither scoring calibration nor any summary-based boost has been validated.
 
-**Impact:** Three-tier system balances speed (STM), semantic coherence (Summary), and completeness (LTM).
+**Known limitations:** STM and the immediate transcript are per-process; LTM is the cross-session record. Chroma cycles are sorted in memory after retrieval for transcript views. Embedding model versions must not be mixed in a collection during the planned local-embedding migration.
 
 ### Proactive Engagement Engine
 
@@ -1576,7 +1613,7 @@ performance_data = {
    • Make: prediction about user's next action
    • Integrate: Self-model context, working memory, theory of mind, agent outputs
    • Generate: final response with rich metadata
-   • Moderate: safety check on output
+  • Generate: final synthesis. Input moderation occurs at the `/chat` entrypoint; there is no separate final-output moderation pass.
    ↓
 9.5 META-COGNITIVE ASSESSMENT (Pre-Response Gate)
    • Evaluate: answer appropriateness and knowledge boundaries
@@ -1634,12 +1671,10 @@ performance_data = {
       - autonomous:self_assess
       - autonomous:curiosity
     ↓
-12. MEMORY CONSOLIDATION (Background, Every 30 min)
-    • Check: should_consolidate()
-    • Process: high-priority cycles (>0.7)
-    • Generate: episodic memories (narratives)
-    • Extract: semantic memories (concepts)
-    • Store: in episodic_memories and semantic_memories collections
+12. MEMORY CONSOLIDATION (Service available; scheduling not wired)
+  • `MemoryConsolidationService` can check `should_consolidate()` and execute a requested job.
+  • The current application startup does not start a periodic loop or automatically enqueue consolidation jobs.
+  • When explicitly executed, jobs process high-priority cycles, generate episodic narratives, extract semantic concepts, and store them in ChromaDB.
     ↓
 13. RESPONSE TO USER
 ```
@@ -2013,17 +2048,15 @@ The ECA includes a comprehensive scientific dashboard for real-time monitoring a
 #### Backend Metrics Service (`src/services/metrics_service.py`)
 
 **Core Components:**
-- **MetricsCollector:** Central collection and aggregation service
-- **PerformanceTracker:** System performance monitoring (response time, throughput, memory)
-- **LearningTracker:** Skill improvement and learning event recording
-- **EmergenceTracker:** Agent coordination and emergence pattern analysis
+- **MetricsService:** One concrete service that stores an in-memory event buffer, rolling aggregates, and a ChromaDB collection.
+- **Statistical helpers:** Methods on `MetricsService` for analysis, learning curves, group comparison, and research report generation.
 
 **Key Features:**
-- **Real-time collection** from all cognitive services
+- **Instrumentation in selected services** such as orchestration, memory, attention, and learning paths
 - **Structured storage** with ChromaDB for historical analysis
-- **WebSocket broadcasting** for live dashboard updates
+- **WebSocket initial snapshot**; continuous broadcast is not implemented
 - **REST API endpoints** for historical data retrieval
-- **Configurable retention** and aggregation policies
+- **In-memory buffer and retention settings**; ChromaDB collection initialization is asynchronous and may fall back to memory-only metrics on failure
 
 #### Integration Points
 
@@ -2061,16 +2094,16 @@ metrics_service.record_skill_improvement(
 
 #### REST Endpoints
 - `GET /api/dashboard/metrics` - Current metrics snapshot
-- `GET /api/dashboard/history?period=1h|24h|7d` - Historical metrics data
-- `GET /api/dashboard/config` - Dashboard configuration
+- `GET /api/dashboard/history?hours=1..168` - Historical metrics data
 - `GET /api/dashboard/analysis/statistical` - Statistical analysis results
+- `GET /api/dashboard/analysis/compare` - Metric comparison
 - `GET /api/dashboard/analysis/learning-curves` - Learning curve analysis
 - `GET /api/dashboard/export/csv?period=24h` - CSV data export
 - `GET /api/dashboard/export/json?period=7d` - JSON data export
 - `GET /api/dashboard/export/report` - Research report generation
 
 #### WebSocket Endpoint
-- `WebSocket /ws/dashboard` - Real-time metrics streaming
+- `WebSocket /ws/dashboard` - Sends an initial metrics snapshot and remains connected; server-side live update broadcasting is planned.
 
 ### Scientific Evaluation Metrics
 
@@ -2151,7 +2184,7 @@ The ECA includes advanced statistical analysis and research export capabilities 
 - Daily aggregates: 1 year
 - Monthly aggregates: Indefinite
 
-### Real-time Streaming Architecture
+### Planned Real-time Streaming Architecture
 
 **WebSocket Implementation:**
 ```python

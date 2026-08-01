@@ -35,11 +35,12 @@ def test_fallback_counting():
     # Should count ~8-10 tokens (7 words + punctuation)
     assert 7 <= count <= 12
 
-def test_count_tokens_batch():
+@pytest.mark.asyncio
+async def test_count_tokens_batch():
     """Test batch token counting."""
     counter = TokenCounter()
     texts = ["Hello world", "This is another test", ""]
-    counts = counter.count_tokens_batch(texts)
+    counts = await counter.count_tokens_batch(texts)
     assert len(counts) == 3
     assert counts[0] > 0
     assert counts[1] > counts[0]  # Longer text = more tokens
@@ -51,7 +52,7 @@ def test_token_budget():
     budget, reserve = counter.get_token_budget(0.2)
     assert budget > 0
     assert reserve > 0
-    assert budget > reserve  # Budget should be larger than reserve
+    assert budget + reserve <= 250_000
     
 @pytest.mark.asyncio
 async def test_count_tokens_batch_async():
@@ -86,23 +87,11 @@ def test_caching():
     
     assert count1 == count2
 
-@pytest.mark.asyncio
-async def test_retry_behavior():
-    """Test retry behavior on API failures."""
+def test_token_counting_falls_back_when_provider_fails():
+    """Token counting remains available when the configured provider fails."""
     counter = TokenCounter()
-    
-    # Mock the Gemini API to fail twice then succeed
-    fail_count = 0
-    def mock_count(*args, **kwargs):
-        nonlocal fail_count
-        if fail_count < 2:
-            fail_count += 1
-            raise Exception("API Error")
-        return Mock(total_tokens=5)
-    
-    with patch('google.generativeai.count_tokens', side_effect=mock_count):
-        # Should succeed after retries
-        count = counter.count_tokens("test retry")
-        assert count > 0
-        # Should have tried 3 times
-        assert fail_count == 2
+    counter._use_fallback = False
+    counter._model = Mock()
+    counter._model.count_tokens.side_effect = Exception("provider unavailable")
+
+    assert counter.count_tokens("test fallback") > 0

@@ -20,6 +20,9 @@ class Settings(BaseSettings):
     EMBEDDING_MODEL_NAME: str = "models/embedding-001" # Default LLM model for embedding generation
     LLM_MODEL_FOR_RESPONSE_GENERATION: str = "models/gemini-2.5-flash-lite" # Specific model for Cognitive Brain's final response
     LLM_MODEL_FOR_MODERATION: str = "models/gemini-2.0-flash-lite" # Specific model for content moderation
+    LLM_PROVIDER: str = Field("gemini", env="LLM_PROVIDER")
+    OLLAMA_BASE_URL: str = Field("http://localhost:11434", env="OLLAMA_BASE_URL")
+    OLLAMA_CHAT_MODEL: str = Field("", env="OLLAMA_CHAT_MODEL")
 
     # LLM Rate limiting & concurrency
     LLM_MAX_CONCURRENCY_PER_MODEL: int = Field(2, env="LLM_MAX_CONCURRENCY_PER_MODEL")

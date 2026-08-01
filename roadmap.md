@@ -13,6 +13,17 @@
 
 Do not mark a capability validated merely because its service class exists. Learning, retrieval, and routing claims require a fixture suite and measured baseline.
 
+## Current Progress
+
+**Completed on August 1, 2026:**
+
+- Test collection and the current backend suite are repaired: `49 passed, 3 skipped` using the repository virtual environment.
+- The Gemini-specific service now sits behind a minimal provider contract and `GeminiProvider` compatibility adapter; runtime routing remains Gemini-backed.
+- `OllamaProbe` checks `/api/tags` and `/health/deep` reports local server/model availability without changing normal routing.
+- The probe currently reports Ollama unavailable at `http://localhost:11434`; the exact installed model tag still needs confirmation once the Ollama service is running and visible to this terminal.
+
+**Next action:** Start or complete the Ollama installation, set `OLLAMA_CHAT_MODEL` to the exact tag returned by `ollama list`, then confirm `/health/deep` reports `available: true` and `model_installed: true` before beginning the local text-routing slice.
+
 ## Direction
 
 Run the normal cognitive cycle locally through Ollama, using a capable local multimodal model for chat, image understanding, audio understanding where supported, agent analysis, and final synthesis. Reserve cloud inference for explicit research escalation: the Discovery/Curiosity path may call a configurable cloud model when local knowledge is insufficient or current external information is required.
@@ -53,6 +64,7 @@ Cloud research is a capability, not the default model. The local final synthesiz
 - **Explicit escalation:** A policy makes cloud calls based on need for current information, task difficulty, local failure, or user request; it records why the call happened.
 - **Capability-driven routing:** Audio, image, embeddings, tool use, JSON mode, and moderation are model/provider capabilities, not assumptions tied to a model name.
 - **Provider-neutral configuration:** Ollama, Gemini, and later providers are selected by configuration rather than direct imports in agents.
+- **Scheduled local inference:** A local model is a constrained shared resource. Interactive work, background work, and model residency require explicit admission control rather than nominal agent parallelism.
 - **Bounded context:** Continue limiting raw transcript and agent output sizes before sending anything to a provider.
 - **Preserve local state:** ChromaDB, logs, metrics, and user memory remain local. Cloud requests contain the minimum necessary context.
 
@@ -85,6 +97,7 @@ Cloud research is a capability, not the default model. The local final synthesiz
 4. Add provider capabilities such as `supports_images`, `supports_audio`, `supports_embeddings`, `supports_structured_output`, `supports_tools`, and `is_local`.
 5. Use an explicit structured-output parser/repair boundary. Local models may not consistently return the JSON currently expected by agents.
 6. Keep retry, concurrency, timeout, context-size, and audit logging at the provider facade rather than inside a specific provider.
+7. Introduce shared `ProviderRequest` and `ProviderResult` envelopes so every provider path carries purpose, required capabilities, structured-output schema, privacy classification, context budget, timeout, provider/model, usage, latency, finish reason, parse/repair status, and capability evidence.
 
 **Exit criteria:** The app can run unchanged with a configured Gemini adapter, while no agent imports a Gemini SDK or hardcodes a Gemini model name.
 
@@ -101,9 +114,10 @@ Cloud research is a capability, not the default model. The local final synthesiz
 3. Route all routine agent calls and `CognitiveBrain` synthesis through the local chat provider.
 4. Add health checks for Ollama availability and installed model presence.
 5. Add a provider fallback policy: fail clearly for normal local requests; never silently send private context to a cloud provider.
-6. Benchmark the full cycle and tune agent activation, token budgets, concurrency, and context trimming for the available hardware.
+6. Add a `ModelExecutionScheduler` (or `InferenceBudgetManager`) before enabling local routine routing. It owns bounded concurrency, interactive-over-background priority, per-cycle call/token budgets, cancellation, compact-cycle degradation, model-residency state, and queue/VRAM telemetry.
+7. Benchmark the full cycle and tune agent activation, token budgets, concurrency, and context trimming for the available hardware.
 
-**Exit criteria:** A text-only `/chat` cycle completes locally with no Gemini API calls, and the provider used is visible in cycle metadata and logs.
+**Exit criteria:** A text-only `/chat` cycle completes locally with no Gemini API calls; local inference remains bounded under concurrent work; and the selected provider/model plus scheduling decision are visible in cycle metadata and logs.
 
 ## Phase 3: Separate Embeddings and Memory Retrieval
 
@@ -124,9 +138,9 @@ Cloud research is a capability, not the default model. The local final synthesiz
 1. Verify the exact Ollama model tag and its declared capabilities. Do not assume `gemma-4-E4B-it` supports image or audio solely from its name; confirm what Ollama reports and test it with known fixtures.
 2. Add model-capability probes at startup and expose their results through `/health/deep`.
 3. Wire `VisualInputProcessor` into the cognitive cycle only when the active provider supports images.
-4. Keep audio as a separate capability:
-   - If the local model accepts audio, implement an audio provider adapter.
-   - Otherwise use a local speech-to-text engine first, then pass the transcript to the local chat model.
+4. Introduce `TranscriptionProvider` as a separate capability and pipeline stage:
+   - If a local model accepts audio, adapt it behind `TranscriptionProvider`.
+   - Otherwise use a local speech-to-text engine, then pass its transcript to the normal local chat provider.
 5. Preserve MIME type, file size, duration, and provenance metadata. Enforce local limits before base64 content enters a prompt.
 6. Add image and audio fixture tests for success, unsupported capability, invalid MIME type, oversized input, and provider failure.
 
@@ -159,8 +173,7 @@ Cloud research is a capability, not the default model. The local final synthesiz
 2. Add provider-level metrics: selected provider/model, local/cloud ratio, latency, failure class, context size, escalation reason, and estimated cloud usage.
 3. Extend dashboard streaming only after the current snapshot-only WebSocket is replaced with a real subscription/broadcast mechanism.
 4. Add a local-only mode that rejects all cloud escalation, plus a research-enabled mode that requires an explicit configuration flag.
-5. Start the memory-consolidation scheduler deliberately, with an enable flag, lifecycle ownership, and tests. Keep it local unless a specific consolidation job explicitly requires research.
-6. Add CI checks for tests, type checking, frontend build, `.env.example` completeness, and provider contract tests.
+5. Add CI checks for tests, type checking, frontend build, `.env.example` completeness, and provider contract tests.
 
 **Exit criteria:** Local-only mode is enforceable and tested; hybrid activity is observable; background services have explicit lifecycle management.
 
@@ -176,7 +189,7 @@ Cloud research is a capability, not the default model. The local final synthesiz
 4. Preserve provenance: summaries and semantic memories must retain source cycle IDs, generation provider/model, timestamps, and embedding version.
 5. Add per-user locking and fault-injection tests for summary-before-flush, failed upserts, and interrupted recovery.
 6. Add a deliberate STM cleanup and snapshot policy: retention bounds, recovery age limits, periodic snapshots, and no silent data deletion.
-7. Start the consolidation scheduler only behind an enable flag, with one lifecycle owner, task de-duplication, cooldowns, and a shutdown test.
+7. After repairing and testing the consolidation contract, start its scheduler only behind an enable flag, with one lifecycle owner, task de-duplication, cooldowns, and a shutdown test.
 8. Record memory metrics: retrieval latency, hit source (STM/summary/LTM), flush reason, token counts before/after, summary failures, and consolidation outcome.
 9. Repair and test the consolidation service contract before scheduling it: implement or replace its missing `MemoryService.get_user_cycles()` dependency and pass both `user_id` and `cycle_id` to `get_cycle_by_id()`.
 10. Verify the episodic-to-semantic extraction path has a persistent destination and a retrieval path before presenting semantic memories as available to CognitiveBrain.

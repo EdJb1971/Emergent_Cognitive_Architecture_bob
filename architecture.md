@@ -17,8 +17,10 @@ The backend is a local, single-user research prototype. A valid API key always m
 | Memory consolidation | Implemented service, not automatically scheduled | `MemoryConsolidationService` can create and execute jobs, but app startup does not start a periodic 30-minute loop or enqueue jobs automatically. |
 | Metrics/dashboard | Partial | REST metrics and research endpoints exist. Metrics ChromaDB initialization is asynchronous and not awaited at startup. The WebSocket sends an initial snapshot then waits for client messages; broadcast updates are not implemented. |
 | Multimodal input | Partial | Audio transcription is wired into the cycle. `VisualInputProcessor` exists but is not wired into application startup or the cognitive cycle. |
+| Provider seam | Implemented, Gemini-active | `LLMProvider` defines the minimal chat, embedding, and moderation contract. `GeminiProvider` delegates to the existing Gemini service, so routine routing remains Gemini-backed. |
+| Ollama readiness | Implemented probe, local runtime unavailable | Startup and `/health/deep` call `OllamaProbe` against `/api/tags`; it reports installed-model status without routing requests to Ollama. The August 1 probe could not reach `http://localhost:11434`. |
 | Salience network | Planned | There is a feature flag only; no `SalienceNetwork` implementation is present. |
-| Validation | Currently broken | The Python suite has a syntax error in `tests/test_llm_integration_service.py`, and `tests/test_memory_service.py` still imports MongoDB despite the ChromaDB implementation. |
+| Validation | Repaired baseline | The repository virtual environment runs `49 passed, 3 skipped` on August 1, 2026. This is a regression baseline, not evidence that learning, retrieval, or routing quality has been measured. |
 
 The phase sections below retain the design intent. Treat statements about autonomous background execution, measured performance improvements, or real-time streaming as planned unless this status section explicitly marks them implemented.
 
@@ -147,6 +149,8 @@ The ECA is a full-stack application with a **React/TypeScript frontend** and a *
 
 *   **Parallelism and Selective Attention:** Agents process input concurrently, but the ThalamusGateway selectively activates only necessary agents based on input complexity, urgency, and context needs (mimicking human attention).
 
+  **Runtime status:** Selective routing is implemented. **Validation status:** Agent-level tasks are dispatched with `asyncio.gather`, but local-model concurrency, GPU residency, and end-to-end throughput have not been measured. **Operational limitation:** A local inference scheduler does not yet exist.
+
 *   **Multi-Tier Memory System:** Implements human-like memory hierarchy:
   - **Short-Term Memory (STM):** Token-limited immediate context (configurable, 25k–50k tokens for Gemini)
   - **Summary Memory:** Condensed conversation context with semantic search
@@ -202,6 +206,7 @@ The backend is a FastAPI application serving a RESTful API for the frontend.
 │   │   ├── core_models.py           # Core system models (UserRequest, AgentOutput, CognitiveCycle, ErrorAnalysis)
 │   │   ├── memory_models.py         # Memory system models (STM, Summary, LTM)
 │   │   └── multimodal_models.py     # Multimodal input/output models
+│   ├── providers/                   # Provider contracts, Gemini adapter, Ollama probe
 │   └── services/                    # Business logic and core services
 │       ├── audio_input_processor.py         # Audio input processing and transcription
 │       ├── autobiographical_memory_system.py # Narrative timeline and significance tracking
@@ -229,21 +234,9 @@ The backend is a FastAPI application serving a RESTful API for the frontend.
 │       ├── visual_input_processor.py        # Visual input processing
 │       ├── web_browsing_service.py          # Web research and information gathering
 │       └── working_memory_buffer.py        # Task-relevant context maintenance
-│       ├── autobiographical_memory_system.py  # Episodic/semantic memory
-│       ├── memory_consolidation_service.py    # Sleep-like consolidation
-│       ├── theory_of_mind_service.py          # Mental state inference
-│       ├── decision_engine.py              # Autonomous trigger policies
-│       ├── background_task_queue.py        # Async task management
-│       ├── self_reflection_discovery_engine.py  # Pattern learning
-│       ├── web_browsing_service.py         # Web browsing & research (Google CSE/SerpAPI + scraping + summarization)
-│       ├── audio_input_processor.py        # Audio processing (speech-to-text, analysis, safe fallback)
-│       └── visual_input_processor.py       # Image processing (future)
 └── tests/                           # Pytest test suite
     ├── test_memory_service.py
     ├── test_orchestration_service.py
-    └── test_llm_integration_service.py
-```
-
     └── test_llm_integration_service.py
 ```
 
@@ -345,9 +338,11 @@ class WorkingMemoryContext:
 
 **Purpose:** Pre-process input and selectively activate agents (mimics human selective attention)
 
+**Runtime status:** Implemented and wired before agent dispatch. **Validation status:** Routing accuracy, latency benefit, and any compute saving are not measured. **Operational limitation:** Agent tasks may still contend for one local model when local routing is enabled.
+
 **Key Features:**
 - **Quick analysis**: Modality, urgency, complexity, context_need
-- **Selective activation**: Skips unnecessary agents (saves 30-60% compute on simple queries)
+- **Selective activation**: May skip unnecessary agents for simple queries; compute savings are a design hypothesis, not a measured result.
   - Skip emotional agent for low-urgency factual queries
   - Skip memory agent for minimal context needs
   - Skip creative/critic/discovery for simple inputs
@@ -494,12 +489,14 @@ class WorkingMemoryContext:
 
 **Purpose:** Background memory consolidation like human sleep processing
 
+**Runtime status:** Job creation and execution methods exist. **Validation status:** End-to-end consolidation and retrieval impact are not measured. **Operational limitation:** Application startup does not schedule the periodic loop, and the current job/service contract has known call-signature mismatches.
+
 **Key Features:**
 - **3 consolidation types**:
   1. **Episodic-to-semantic**: High-priority cycles (>0.7) → LLM generates narratives → extract semantic concepts
   2. **Memory replay**: Mark memories as replayed for strengthening
   3. **Pattern extraction**: LLM analyzes cycles to discover behavioral patterns
-- **Background loop**: Runs every 30 minutes (configurable)
+- **Background loop**: Implemented as a callable loop with a 30-minute default, but not started by application lifecycle.
 - **Priority-based**: Only consolidates high-priority memories (emotional, novel, personal)
 - **Semantic concept extraction**: Groups cycles by topic, LLM extracts concepts
 
@@ -599,7 +596,7 @@ After each user interaction:
 - `GET /theory-of-mind/stats?user_id={uuid}` - Get validation statistics
 - `GET /theory-of-mind/current-state?user_id={uuid}` - Get current mental state model
 
-**Impact:** System learns from prediction outcomes, improving intention-awareness over time. Creates genuine understanding of user patterns and mental states.
+**Design intent:** Prediction outcomes can become evidence for improving intention-awareness. **Validation status:** Prediction coverage and accuracy have not yet been measured, so the system does not claim genuine understanding of user mental states.
 
 ---
 
@@ -741,7 +738,7 @@ AgentOutput(
 - If `logical_coherence < 0.5`, ConflictMonitor flags high-severity conflict
 - Cognitive Brain may defer to Critic recommendations over Creative suggestions
 
-**Impact:** Prevents hallucinations, contradictions, and unsafe responses from reaching the user.
+**Runtime status:** Produces coherence and safety-oriented analysis for final synthesis. **Validation status:** It has not been evaluated as a hallucination or safety guarantee. **Operational limitation:** It can inform the response but does not independently prevent unsupported claims from reaching the user.
 
 #### 13. Discovery Agent (Exploratory PFC-Inspired)
 
@@ -805,7 +802,7 @@ AgentOutput(
 **Key Features:**
 - **Pattern Mining**: Extract recurring themes, user preferences, and behavioral patterns
 - **Insight Generation**: Synthesize new understandings from historical data
-- **Autonomous Triggers**: Background processing every 30 minutes or on significant events
+- **Autonomous Triggers**: Trigger policies and background task routing are implemented; periodic autonomous scheduling and measured trigger behavior are not yet active.
 - **Proactive Messaging**: Generate conversation starters based on discovered patterns
 
 **Reflection Types:**
@@ -1398,10 +1395,9 @@ Example log:
 3. **Pattern extraction**: Discover behavioral patterns across cycles
 
 **Background Loop:**
-- Runs every 30 minutes (configurable)
-- Checks if consolidation needed (`should_consolidate()`)
-- Processes high-priority memories (>0.7 consolidation_priority)
-- Autonomous, non-blocking
+- Implemented as a callable loop with a 30-minute default
+- Can check whether consolidation is needed (`should_consolidate()`)
+- Is not started by application lifecycle, so it is currently neither periodic nor autonomous
 
 **LLM-Powered Pattern Extraction:**
 ```python
@@ -1654,7 +1650,7 @@ performance_data = {
     • Learn: which approaches work best for different contexts
     • Form: habits from repeated successful strategies
     ↓
-13. AUTONOMOUS TRIGGERING (Background)
+13. AUTONOMOUS TRIGGERING (On-demand background tasks)
     • Decision Engine monitors signals:
       - STM pressure
       - Summary updates
@@ -1671,7 +1667,7 @@ performance_data = {
       - autonomous:self_assess
       - autonomous:curiosity
     ↓
-12. MEMORY CONSOLIDATION (Service available; scheduling not wired)
+14. MEMORY CONSOLIDATION (Service available; scheduling not wired)
   • `MemoryConsolidationService` can check `should_consolidate()` and execute a requested job.
   • The current application startup does not start a periodic loop or automatically enqueue consolidation jobs.
   • When explicitly executed, jobs process high-priority cycles, generate episodic narratives, extract semantic concepts, and store them in ChromaDB.
@@ -1705,7 +1701,7 @@ OrchestrationService (Conductor)
 │   └── ChromaDB (LTM persistence)
 ├── DecisionEngine (autonomous triggers)
 │   └── BackgroundTaskQueue (async execution)
-├── MemoryConsolidationService (background loop)
+├── MemoryConsolidationService (explicit jobs; scheduler not wired)
 ├── MetaCognitiveMonitor (knowledge boundaries)
 ├── ReinforcementLearningService (strategy learning)
 ├── ProceduralLearningService (skill refinement)
@@ -2003,7 +1999,7 @@ AgentOutput(
 
 ## Scientific Dashboard & Metrics System
 
-The ECA includes a comprehensive scientific dashboard for real-time monitoring and analysis of cognitive performance, providing quantitative metrics for evaluating emergence, learning effectiveness, and system health.
+The ECA includes a dashboard and metrics service for inspecting cognitive events and research-oriented analysis. **Runtime status:** REST endpoints and an initial WebSocket snapshot exist. **Operational limitation:** Continuous real-time broadcasting and validated emergence/learning evaluation are not implemented.
 
 ### Architecture Overview
 
@@ -2267,7 +2263,7 @@ The frontend is a single-page application (SPA) built with React 18 and TypeScri
 *   **`ChatInput.tsx`:** Multimodal text input with image/audio upload, accessibility-compliant form elements
 
 #### Scientific Dashboard Components
-*   **`Dashboard.tsx`:** Main modal dashboard with tabbed interface (Overview/Statistical Analysis), real-time metrics, and WebSocket streaming
+*   **`Dashboard.tsx`:** Main modal dashboard with tabbed interface (Overview/Statistical Analysis), REST metrics, and an initial WebSocket snapshot
 *   **`StatisticalAnalysis.tsx`:** Advanced statistical analysis tools with research export capabilities (CSV/JSON), significance testing, and automated report generation
 *   **`MetricsCard.tsx`:** Reusable component for displaying key performance indicators with trend indicators
 *   **`RealTimeChart.tsx`:** Canvas-based performance visualization with multiple metric overlays
@@ -2280,9 +2276,9 @@ The frontend is a single-page application (SPA) built with React 18 and TypeScri
 
 ### Dashboard Integration
 
-The dashboard is seamlessly integrated into the chat interface via a toggle button, providing real-time monitoring without disrupting the user experience. Key features include:
+The dashboard is integrated into the chat interface through a toggle button. It supports REST-based metrics views; live update broadcasting remains planned. Key features include:
 
-- **Real-time WebSocket streaming** for live metrics updates
+- **Initial WebSocket snapshot**; continuous server-side metric broadcasts are not implemented
 - **Configurable refresh intervals** (1s to 60s)
 - **Modal overlay design** that doesn't interfere with chat functionality
 - **Responsive design** optimized for both desktop and mobile viewing
@@ -2541,8 +2537,8 @@ CHROMA_PERSIST_DIRECTORY=./chroma_db
 ### Performance Optimization
 
 **Selective Agent Activation:**
-- Simple queries: Skip 4-5 agents (saves 30-60% compute)
-- Complex queries: Full 7-agent orchestration
+- Simple queries: May skip agents according to ThalamusGateway routing
+- Complex queries: May activate more agents; local compute savings and end-to-end latency remain unmeasured
 
 **Memory Tiering:**
 - STM: O(1) lookup, fastest

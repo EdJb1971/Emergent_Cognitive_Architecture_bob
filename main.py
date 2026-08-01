@@ -36,6 +36,7 @@ from src.agents.critic_agent import CriticAgent
 from src.agents.discovery_agent import DiscoveryAgent
 from src.services.web_browsing_service import WebBrowsingService
 from src.services.audio_input_processor import AudioInputProcessor
+from src.providers import GeminiProvider, OllamaProbe
 from src.dependencies import APIKeyAuth, get_api_key_user_id # Import the authentication dependency
 from typing import Dict, Any, List, Optional
 from uuid import UUID
@@ -53,9 +54,21 @@ async def lifespan(app: FastAPI):
     logger.info(f"Starting up {settings.APP_NAME} in {settings.ENVIRONMENT} environment...")
 
     try:
-        # Initialize LLMIntegrationService
-        app.state.llm_service = LLMIntegrationService()
-        logger.info("LLMIntegrationService initialized successfully.")
+        # Keep Gemini as the active provider during the local-provider migration.
+        app.state.llm_service = GeminiProvider(LLMIntegrationService())
+        app.state.llm_provider = app.state.llm_service.capabilities
+        app.state.ollama_probe = OllamaProbe(
+            base_url=settings.OLLAMA_BASE_URL,
+            model_name=settings.OLLAMA_CHAT_MODEL,
+        )
+        app.state.ollama_status = await app.state.ollama_probe.probe()
+        logger.info(
+            "Active LLM provider initialized: %s (%s). Ollama available=%s, configured model installed=%s.",
+            app.state.llm_provider.provider,
+            app.state.llm_provider.model,
+            app.state.ollama_status["available"],
+            app.state.ollama_status["model_installed"],
+        )
 
         # Initialize MemoryService and connect to ChromaDB
         app.state.memory_service = MemoryService(llm_service=app.state.llm_service, metrics_service=None)
@@ -1459,6 +1472,12 @@ async def deep_health_check_endpoint(request_obj: Request):
         health_status["components"]["llm_service"] = {"status": "unhealthy", "message": f"LLM service check failed: {e}"}
         health_status["status"] = "degraded"
         logger.error(f"Deep health check: LLM service failed: {e}", exc_info=True)
+
+    try:
+        ollama_status = await request_obj.app.state.ollama_probe.probe()
+        health_status["components"]["ollama"] = ollama_status
+    except Exception as e:
+        health_status["components"]["ollama"] = {"available": False, "message": f"Ollama probe failed: {e}"}
 
     # Check Memory Service (ChromaDB connection)
     try:

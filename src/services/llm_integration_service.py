@@ -5,7 +5,7 @@ import re
 import google.generativeai as genai
 from google.generativeai.types import BlockedPromptException, HarmCategory, HarmBlockThreshold
 from typing import List, Dict, Any, Optional, Union
-from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception
 
 from src.core.config import settings
 from src.core.exceptions import LLMServiceException, ConfigurationError
@@ -19,11 +19,16 @@ MAX_INPUT_TOKENS = 800000  # Conservative limit to prevent 1M+ token explosions
 MAX_EMBEDDING_PAYLOAD_BYTES = 35000  # Conservative limit under 36KB
 MAX_EMBEDDING_CHUNK_TOKENS = 2048   # Conservative token limit per chunk
 
+def _is_retryable_llm_error(error: Exception) -> bool:
+    return isinstance(error, LLMServiceException) and error.status_code >= 500
+
+
 # Define retry settings for LLM calls
 LLM_RETRY_SETTINGS = {
     "stop": stop_after_attempt(3),
     "wait": wait_exponential(multiplier=1, min=4, max=10),
-    "retry": retry_if_exception_type(LLMServiceException) # Retry on our custom LLM exception
+    "retry": retry_if_exception(_is_retryable_llm_error),
+    "reraise": True,
 }
 
 class LLMIntegrationService:
@@ -183,7 +188,10 @@ class LLMIntegrationService:
             LLMServiceException: If there's an error during text generation or prompt is blocked.
         """
         if not prompt and not image_base64 and not audio_base64:
-            raise LLMServiceException(detail="At least one of prompt, image_base64, or audio_base64 must be provided for generation.")
+            raise LLMServiceException(
+                detail="At least one of prompt, image_base64, or audio_base64 must be provided for generation.",
+                status_code=400,
+            )
 
         try:
             model = genai.GenerativeModel(model_name)
@@ -243,11 +251,16 @@ class LLMIntegrationService:
                 raise LLMServiceException(detail=f"Prompt blocked due to safety concerns: {block_reason}", status_code=400)
             else:
                 logger.error(f"LLM text generation failed with no candidates and no block reason for prompt: {prompt[:100]}...")
-                raise LLMServiceException(detail="LLM text generation failed: No content generated.")
+                raise LLMServiceException(
+                    detail="LLM text generation failed: No content generated.",
+                    status_code=422,
+                )
 
         except BlockedPromptException as e:
             logger.warning(f"Prompt blocked by LLM: {e}")
             raise LLMServiceException(detail=f"Prompt blocked by LLM: {e}", status_code=400)
+        except LLMServiceException:
+            raise
         except Exception as e:
             # Detect 429 rate limit and respect server-provided retry delay if present
             msg = str(e)

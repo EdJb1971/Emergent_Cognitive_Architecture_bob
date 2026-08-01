@@ -435,18 +435,24 @@ class MemoryService:
             logger.error(f"Error during STM flush for user {user_id}: {e}", exc_info=True)
             raise APIException(detail=f"Failed to flush STM to LTM: {e}", status_code=500)
             
-    def _distance_to_score(self, distance: float) -> float:
+    def _distance_to_score(self, distance: float, metric: str = "l2") -> float:
         """
-        Convert ChromaDB distance to a similarity-like score in [0,1] where higher is better.
-        Behavior depends on the metric used by ChromaDB. This implements:
-        - if distance in [0,1]: score = 1 - distance (common for normalized distances)
-        - otherwise: fallback to 1 / (1 + distance) to produce a bounded [0,1] value.
+        Convert a ChromaDB distance to a monotonic score in [0, 1].
+
+        Chroma's default ``l2`` value is squared Euclidean distance. For the
+        unit-normalized vectors used by the active embedding provider,
+        ``cosine_similarity = 1 - squared_l2 / 2``. Explicit cosine and inner
+        product collections use a ``1 - distance`` conversion. Unknown metrics
+        use a conservative reciprocal transform that remains monotonic.
         """
         try:
-            if 0.0 <= distance <= 1.0:
-                return 1.0 - distance
-            # fallback normalization
-            return 1.0 / (1.0 + distance)
+            numeric_distance = max(0.0, float(distance))
+            normalized_metric = (metric or "l2").lower()
+            if normalized_metric == "l2":
+                return max(0.0, min(1.0, 1.0 - numeric_distance / 2.0))
+            if normalized_metric in {"cosine", "ip"}:
+                return max(0.0, min(1.0, 1.0 - numeric_distance))
+            return 1.0 / (1.0 + numeric_distance)
         except Exception:
             return 0.0
 
@@ -510,13 +516,19 @@ class MemoryService:
 
             # Get LTM results
             ltm_cycles = []
+            collection_metadata = getattr(self.cycles_collection, "metadata", None)
+            distance_metric = (
+                str(collection_metadata.get("hnsw:space", "l2"))
+                if isinstance(collection_metadata, dict)
+                else "l2"
+            )
             # ChromaDB .query returns nested lists per query; results['metadatas'][0] is the list for our single query
             if results and results.get('metadatas'):
                 metadatas_for_query = results['metadatas'][0]
                 distances_for_query = results.get('distances', [[]])[0]
                 for i, metadata in enumerate(metadatas_for_query):
                     distance = distances_for_query[i] if i < len(distances_for_query) else float('inf')
-                    score = self._distance_to_score(distance)
+                    score = self._distance_to_score(distance, distance_metric)
                     if score >= query_request.min_relevance_score:
                         cycle_data = json.loads(metadata['json_data'])
                         cycle_data['score'] = score

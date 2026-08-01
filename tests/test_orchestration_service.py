@@ -9,6 +9,9 @@ from src.services.cognitive_brain import CognitiveBrain
 from src.services.memory_service import MemoryService
 from src.services.background_task_queue import BackgroundTaskQueue
 from src.services.self_reflection_discovery_engine import SelfReflectionAndDiscoveryEngine
+from src.services.escalation_policy import EscalationPolicy
+from src.services.meta_cognitive_monitor import ActionRecommendation, GapType
+from src.services.research_service import DisabledResearchProvider, ResearchService
 from src.agents.perception_agent import PerceptionAgent
 from src.agents.emotional_agent import EmotionalAgent
 from src.agents.memory_agent import MemoryAgent
@@ -80,7 +83,7 @@ def orchestration_service(
         creative_agent=mock_agents["creative_agent"],
         critic_agent=mock_agents["critic_agent"],
         discovery_agent=mock_agents["discovery_agent"],
-        web_browsing_service=MagicMock(),
+        research_service=MagicMock(),
         cognitive_brain=mock_cognitive_brain,
         memory_service=mock_memory_service,
         background_task_queue=mock_background_task_queue,
@@ -155,6 +158,41 @@ async def test_orchestrate_cycle_memory_service_failure(orchestration_service, m
 
     assert cognitive_cycle.final_response == "Mock final response"
     mock_memory_service.upsert_cycle.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_meta_cognitive_search_recommendation_records_governed_decision(orchestration_service):
+    monitor = MagicMock()
+    monitor.assess_answer_appropriateness = AsyncMock(
+        return_value=(
+            ActionRecommendation.SEARCH_FIRST,
+            GapType.TOPIC_UNKNOWN,
+            0.2,
+            "The named fact is absent and may have changed.",
+        )
+    )
+    orchestration_service.meta_cognitive_monitor = monitor
+    orchestration_service.research_service = ResearchService(
+        EscalationPolicy(research_enabled=False, low_confidence_threshold=0.55),
+        DisabledResearchProvider(),
+    )
+    request = UserRequest(
+        user_id=uuid4(),
+        input_text="Who is the current director of the institute?",
+        session_id=uuid4(),
+    )
+
+    cycle = await orchestration_service.orchestrate_cycle(request)
+
+    decision = cycle.metadata["research_escalation"]
+    assert decision["disposition"] == "blocked_disabled"
+    assert decision["source"] == "meta_cognitive_monitor"
+    assert decision["reasons"] == [
+        "time_sensitive",
+        "low_confidence",
+        "named_fact_missing",
+        "metacognitive_gap",
+    ]
 
 @pytest.mark.asyncio
 async def test_trigger_reflection_enqueues_task(orchestration_service, mock_background_task_queue, mock_self_reflection_discovery_engine):

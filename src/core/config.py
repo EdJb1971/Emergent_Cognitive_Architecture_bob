@@ -49,7 +49,15 @@ class Settings(BaseSettings):
     META_COGNITIVE_MAX_OUTPUT_TOKENS: int = Field(64, env="META_COGNITIVE_MAX_OUTPUT_TOKENS")
     META_COGNITIVE_MAX_RESPONSE_WORDS: int = Field(40, env="META_COGNITIVE_MAX_RESPONSE_WORDS")
 
-    # Web Browsing Service Settings (for WebBrowsingService)
+    # External research is a separate, disabled-by-default capability.
+    RESEARCH_ENABLED: bool = Field(False, env="RESEARCH_ENABLED")
+    RESEARCH_PROVIDER: str = Field("disabled", env="RESEARCH_PROVIDER")
+    RESEARCH_MODEL: str = Field("", env="RESEARCH_MODEL")
+    RESEARCH_LOW_CONFIDENCE_THRESHOLD: float = Field(0.55, env="RESEARCH_LOW_CONFIDENCE_THRESHOLD")
+    RESEARCH_MAX_QUERIES: int = Field(3, env="RESEARCH_MAX_QUERIES")
+    RESEARCH_MAX_QUERY_CHARS: int = Field(500, env="RESEARCH_MAX_QUERY_CHARS")
+
+    # Legacy search credentials are retained for migration only. ResearchService does not read them.
     SERPAPI_API_KEY: Optional[str] = Field(None, env="SERPAPI_API_KEY")
     GOOGLE_API_KEY: Optional[str] = Field(None, env="GOOGLE_API_KEY")
     GOOGLE_CSE_ID: Optional[str] = Field(None, env="GOOGLE_CSE_ID")

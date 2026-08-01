@@ -2,16 +2,19 @@ import json
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
+import chromadb
 import pytest
 
 from src.providers.base import EmbeddingModelIdentity
 from src.tools.eval_retrieval import (
     FIXTURE_VERSION,
+    SEEDED_FIXTURE_VERSION,
     evaluate_collection,
     load_fixture,
     ndcg_at_k,
     recall_at_k,
     reciprocal_rank,
+    seed_fixture_collection,
 )
 
 OLLAMA = EmbeddingModelIdentity(provider="ollama", model="embeddinggemma:latest", vector_dimension=768)
@@ -70,6 +73,63 @@ def test_load_fixture_reports_a_missing_file(tmp_path):
         load_fixture(tmp_path / "absent.json")
 
 
+def test_load_seeded_fixture_rejects_unknown_relevant_ids(tmp_path):
+    path = tmp_path / "seeded.json"
+    path.write_text(
+        json.dumps(
+            {
+                "version": SEEDED_FIXTURE_VERSION,
+                "records": [{"id": "known", "document": "Known memory"}],
+                "queries": [{"query": "Find it", "relevant_ids": ["missing"]}],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="absent from records: missing"):
+        load_fixture(path)
+
+
+@pytest.mark.asyncio
+async def test_seed_fixture_collection_creates_exact_identity_stamped_collection(monkeypatch):
+    provider = MagicMock()
+    provider.verify = AsyncMock(return_value=OLLAMA)
+    provider.embed_batch = AsyncMock(return_value=[[1.0, 0.0], [0.0, 1.0]])
+    monkeypatch.setattr(
+        "src.tools.eval_retrieval.build_embedding_provider",
+        lambda scheduler: provider,
+    )
+    client = chromadb.EphemeralClient()
+
+    identity = await seed_fixture_collection(
+        client,
+        "retrieval_eval_test_v1",
+        [
+            {"id": "r1", "document": "First memory", "metadata": {"category": "one"}},
+            {"id": "r2", "document": "Second memory", "metadata": {"category": "two"}},
+        ],
+        scheduler=MagicMock(),
+    )
+
+    collection = client.get_collection("retrieval_eval_test_v1")
+    assert identity == "ollama/embeddinggemma:latest@768d"
+    assert collection.count() == 2
+    assert collection.metadata["embedding_model"] == "embeddinggemma:latest"
+    assert collection.metadata["fixture_record_count"] == 2
+    provider.embed_batch.assert_awaited_once_with(["First memory", "Second memory"])
+
+
+@pytest.mark.asyncio
+async def test_seed_fixture_collection_requires_eval_namespace(monkeypatch):
+    with pytest.raises(ValueError, match="retrieval_eval_"):
+        await seed_fixture_collection(
+            chromadb.EphemeralClient(),
+            "cognitive_cycles",
+            [{"id": "r1", "document": "Do not overwrite personal memory"}],
+            scheduler=MagicMock(),
+        )
+
+
 @pytest.mark.asyncio
 async def test_evaluation_aggregates_metrics_and_records_misses(monkeypatch):
     collection = MagicMock()
@@ -82,7 +142,7 @@ async def test_evaluation_aggregates_metrics_and_records_misses(monkeypatch):
     client.get_collection.return_value = collection
 
     provider = MagicMock()
-    provider.embed = AsyncMock(return_value=[0.1] * 768)
+    provider.embed_batch = AsyncMock(return_value=[[0.1] * 768, [0.1] * 768])
     monkeypatch.setattr(
         "src.tools.eval_retrieval.build_embedding_provider_for_identity",
         lambda identity, scheduler: provider,
@@ -107,6 +167,7 @@ async def test_evaluation_aggregates_metrics_and_records_misses(monkeypatch):
     assert result.weak_queries[0].retrieved == ["x", "y", "z"]
     assert result.weak_queries[0].relevant == ["missing"]
     assert result.identity == "ollama/embeddinggemma:latest@768d"
+    provider.embed_batch.assert_awaited_once_with(["first", "second"])
 
 
 @pytest.mark.asyncio
@@ -118,7 +179,7 @@ async def test_evaluation_records_partial_recall_as_a_weak_query(monkeypatch):
     client.get_collection.return_value = collection
 
     provider = MagicMock()
-    provider.embed = AsyncMock(return_value=[0.1] * 768)
+    provider.embed_batch = AsyncMock(return_value=[[0.1] * 768])
     monkeypatch.setattr(
         "src.tools.eval_retrieval.build_embedding_provider_for_identity",
         lambda identity, scheduler: provider,

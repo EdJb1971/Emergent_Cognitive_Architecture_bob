@@ -7,6 +7,8 @@ switching EMBEDDING_PROVIDER; a migration without a measured delta is a guess.
 Usage:
     python -m src.tools.eval_retrieval --build-template --sample 60
     python -m src.tools.eval_retrieval --collection cognitive_cycles
+    python -m src.tools.eval_retrieval --seeded \
+        --fixture tests/fixtures/memory_retrieval_seeded.json
     python -m src.tools.eval_retrieval --collection cognitive_cycles \
         --compare cognitive_cycles__ollama_embeddinggemma_latest
 """
@@ -23,15 +25,19 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
 
+import chromadb
+
 from src.core.config import settings
 from src.providers.base import read_collection_identity
 from src.providers.execution_scheduler import ModelExecutionScheduler
-from src.providers.factory import build_embedding_provider_for_identity
+from src.providers.factory import build_embedding_provider, build_embedding_provider_for_identity
 from src.tools.reembed import open_client
 
 logger = logging.getLogger(__name__)
 
 FIXTURE_VERSION = 1
+SEEDED_FIXTURE_VERSION = 2
+SUPPORTED_FIXTURE_VERSIONS = {FIXTURE_VERSION, SEEDED_FIXTURE_VERSION}
 DEFAULT_FIXTURE = Path("tests/fixtures/memory_retrieval.json")
 
 
@@ -107,15 +113,78 @@ def load_fixture(path: Path) -> Dict[str, Any]:
         )
     fixture = json.loads(path.read_text(encoding="utf-8"))
     version = fixture.get("version")
-    if version != FIXTURE_VERSION:
-        raise ValueError(f"Fixture version {version} is not supported; expected {FIXTURE_VERSION}.")
+    if version not in SUPPORTED_FIXTURE_VERSIONS:
+        supported = ", ".join(str(value) for value in sorted(SUPPORTED_FIXTURE_VERSIONS))
+        raise ValueError(f"Fixture version {version} is not supported; expected one of {supported}.")
     queries = [q for q in fixture.get("queries", []) if q.get("query") and q.get("relevant_ids")]
     if not queries:
         raise ValueError(
             f"{path} contains no usable entries. Each query needs 'query' text and at least one 'relevant_ids' value."
         )
     fixture["queries"] = queries
+    if version == SEEDED_FIXTURE_VERSION:
+        records = fixture.get("records") or []
+        record_ids = [record.get("id") for record in records if record.get("id") and record.get("document")]
+        if not record_ids:
+            raise ValueError(f"{path} contains no usable seeded records.")
+        if len(record_ids) != len(set(record_ids)):
+            raise ValueError(f"{path} contains duplicate seeded record ids.")
+        known_record_ids = set(record_ids)
+        unknown_ids = sorted(
+            {
+                relevant_id
+                for query in queries
+                for relevant_id in query["relevant_ids"]
+                if relevant_id not in known_record_ids
+            }
+        )
+        if unknown_ids:
+            raise ValueError(
+                f"{path} references relevant ids absent from records: {', '.join(unknown_ids)}"
+            )
+        fixture["records"] = [
+            record for record in records if record.get("id") and record.get("document")
+        ]
     return fixture
+
+
+async def seed_fixture_collection(
+    client: Any,
+    collection_name: str,
+    records: Sequence[Dict[str, Any]],
+    scheduler: ModelExecutionScheduler,
+) -> str:
+    """Create an exact ephemeral collection from a versioned synthetic fixture."""
+    if not collection_name.startswith("retrieval_eval_"):
+        raise ValueError("Seeded collection names must start with 'retrieval_eval_'.")
+
+    provider = build_embedding_provider(scheduler)
+    identity = await provider.verify()
+    metadata = identity.as_collection_metadata()
+    metadata.update({"fixture_seeded": True, "fixture_record_count": len(records)})
+    collection = client.create_collection(name=collection_name, metadata=metadata)
+
+    ids = [str(record["id"]) for record in records]
+    documents = [str(record["document"]) for record in records]
+    metadatas = []
+    for record in records:
+        record_metadata = dict(record.get("metadata") or {})
+        record_metadata["fixture_record"] = True
+        metadatas.append(record_metadata)
+
+    embeddings = await provider.embed_batch(documents)
+    collection.upsert(
+        ids=ids,
+        embeddings=embeddings,
+        documents=documents,
+        metadatas=metadatas,
+    )
+    if collection.count() != len(records):
+        raise ValueError(
+            f"Seeded collection '{collection_name}' contains {collection.count()} records; "
+            f"expected {len(records)}."
+        )
+    return identity.describe()
 
 
 async def evaluate_collection(
@@ -139,8 +208,14 @@ async def evaluate_collection(
     misses: List[str] = []
     weak_queries: List[QueryDiagnostic] = []
 
-    for entry in queries:
-        embedding = await provider.embed(entry["query"])
+    query_embeddings = await provider.embed_batch([entry["query"] for entry in queries])
+    if len(query_embeddings) != len(queries):
+        raise ValueError(
+            f"Embedding provider returned {len(query_embeddings)} query vectors for "
+            f"{len(queries)} queries."
+        )
+
+    for entry, embedding in zip(queries, query_embeddings):
         response = collection.query(query_embeddings=[embedding], n_results=k)
         retrieved = (response.get("ids") or [[]])[0]
         relevant = entry["relevant_ids"]
@@ -223,22 +298,28 @@ def build_template(client: Any, collection_name: str, sample: int, path: Path) -
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Measure retrieval quality for a Chroma collection.")
-    parser.add_argument("--collection", default="cognitive_cycles", help="Baseline collection to evaluate.")
+    parser.add_argument("--collection", help="Baseline collection to evaluate; defaults to the fixture source collection or cognitive_cycles.")
     parser.add_argument("--compare", help="Candidate collection to evaluate against the baseline.")
     parser.add_argument("--fixture", type=Path, default=DEFAULT_FIXTURE)
     parser.add_argument("-k", type=int, default=5)
     parser.add_argument("--build-template", action="store_true", help="Generate a fixture skeleton and exit.")
     parser.add_argument("--sample", type=int, default=60, help="Records to seed into the template.")
+    parser.add_argument(
+        "--seeded",
+        action="store_true",
+        help="Seed and evaluate an isolated ephemeral collection from a version 2 fixture.",
+    )
     return parser
 
 
 async def run(argv: Optional[Sequence[str]] = None) -> int:
     args = build_parser().parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(message)s")
-    client = open_client()
 
     if args.build_template:
-        written = build_template(client, args.collection, args.sample, args.fixture)
+        client = open_client()
+        collection_name = args.collection or "cognitive_cycles"
+        written = build_template(client, collection_name, args.sample, args.fixture)
         print(f"Wrote {written} draft queries to {args.fixture}.")
         print("Review every entry before trusting a measurement taken from it.")
         return 0
@@ -259,7 +340,33 @@ async def run(argv: Optional[Sequence[str]] = None) -> int:
         max_background=settings.OLLAMA_MAX_BACKGROUND_REQUESTS,
     )
 
-    baseline = await evaluate_collection(client, args.collection, queries, scheduler, args.k)
+    collection_name = args.collection or fixture.get("source_collection") or "cognitive_cycles"
+    if args.seeded:
+        if fixture.get("version") != SEEDED_FIXTURE_VERSION:
+            print(f"--seeded requires a version {SEEDED_FIXTURE_VERSION} fixture with records.")
+            return 1
+        if args.compare:
+            print("--compare is not supported with the single-provider ephemeral seeded run.")
+            return 2
+        client = chromadb.EphemeralClient()
+        try:
+            identity = await seed_fixture_collection(
+                client,
+                collection_name,
+                fixture["records"],
+                scheduler,
+            )
+        except ValueError as error:
+            print(error)
+            return 1
+        print(
+            f"Seeded {len(fixture['records'])} records into ephemeral collection "
+            f"'{collection_name}' [{identity}]."
+        )
+    else:
+        client = open_client()
+
+    baseline = await evaluate_collection(client, collection_name, queries, scheduler, args.k)
     print(baseline.summary())
     print_diagnostics(baseline)
 

@@ -21,7 +21,7 @@ This document describes the Emergent Cognitive Architecture (ECA), a brain-inspi
 | Multimodal input | Partial | Audio transcription is wired into the cycle. `VisualInputProcessor` exists but is not wired into application startup or the cognitive cycle. |
 | Provider selection | Implemented, configuration-driven | `build_active_provider()` in `src/providers/factory.py` resolves generation, embedding, moderation, and synthesis independently. Mixed selections are composed by `CompositeProvider`; a uniform selection returns the single adapter. Unknown values fail startup. |
 | End-to-end cycle | Verified running | First real `/chat` cycles completed on August 1, 2026. Fully local: 103s. Local agents with Gemini synthesis: 44.8s first turn, 66.8s with memory context. Memory recall across turns confirmed (name and detail correctly retrieved from a prior cycle). |
-| Cycle latency attribution | Measured; first reduction slice implemented | `StageTimer` records every orchestrator stage and emits one `CYCLE_TIMING` line per cycle; `OLLAMA_CALL` and `OLLAMA_EMBED` lines carry per-request server, queue, prompt-eval, and eval time. The August 1 measurements attribute latency to local token generation. On August 2, meta-cognitive output was bounded and summary generation moved off the request path; comparable post-change cycle timings have not yet been recorded. |
+| Cycle latency attribution | Measured; first reduction slice validated | `StageTimer` records every orchestrator stage and emits one `CYCLE_TIMING` line per cycle; `OLLAMA_CALL` and `OLLAMA_EMBED` lines carry per-request server, queue, prompt-eval, and eval time. Two post-change cycles on August 2 measured meta-cognition at `0.53-0.54s` and `memory_upsert` at `3.92-4.24s`, down from `20-25s` and `16-22s` respectively on the comparable slow paths. Agent generation now accounts for `85-89%` of total cycle time. |
 | Local-only operation | Verified | A complete cycle runs with `LLM_PROVIDER`, `EMBEDDING_PROVIDER`, and `MODERATION_PROVIDER` all set to `ollama`, making no cloud call. `LOCAL_ONLY_MODE=true` fails startup if any role resolves to a remote provider. |
 | Token counting | Local | `TokenCounter` uses a local estimator. It previously called the Gemini API per count, which put a network round-trip and a retry/backoff storm in the hot path of every memory operation. |
 | Provider neutrality | Implemented at the seam, Gemini-configured | `GEMINI_API_KEY` is optional and is only required when a Gemini-backed provider is actually selected. No agent imports a provider SDK or hardcodes a model name. The shipped default configuration selects Gemini for all three roles because that is the only cloud key currently held. |
@@ -29,9 +29,11 @@ This document describes the Emergent Cognitive Architecture (ECA), a brain-inspi
 | Local embeddings | Verified running | `embeddinggemma:latest` returns local `768`-dimension vectors through `OllamaEmbeddingProvider` and is the configured embedding role. Measured cost is ~250ms per single-text embed. |
 | Embedding identity guard | Implemented | Collections are stamped with `embedding_provider`, `embedding_model`, and `embedding_dimension`. `apply_embedding_identity()` compares provider and model, never dimension, and refuses to open a collection written by a different embedding model. Untagged non-empty collections are treated as legacy `gemini/models/embedding-001`. |
 | Vector migration | Implemented; no primary collection currently needs migration | `python -m src.tools.reembed` rebuilds a collection into a new identity-stamped collection without modifying its source and can resume by skipping existing ids. On August 2, dry-runs correctly refused both primary collections because they already hold the active `ollama/embeddinggemma:latest@768d` vector identity. There is no retained Gemini primary collection to compare or migrate. |
-| Retrieval evaluation | Initial local smoke baseline measured | `python -m src.tools.eval_retrieval` reports aggregate metrics and any below-perfect queries with the provider that produced each collection. A hand-reviewed 12-query fixture over all 12 current cycle records measured recall@5 `0.958`, MRR `0.958`, and NDCG@5 `0.952` on August 2. The two weak queries were `sister_name` (recall `0.750`, MRR `1.000`) and `brother_name` (recall `0.750`, MRR `0.500`). This small, repetitive corpus is a smoke baseline, not the planned 50-query quality evaluation or a Gemini comparison. |
+| Retrieval evaluation | Reproducible local baseline measured | `python -m src.tools.eval_retrieval --seeded --fixture tests/fixtures/memory_retrieval_seeded.json` embeds 25 synthetic records into an ephemeral, identity-stamped Chroma collection and evaluates 50 reviewed queries without reading or changing personal memory. `embeddinggemma:latest` measured recall, MRR, and NDCG of `1.000` at both k=1 and k=5 on August 2; a repeated run produced the same result and the seeded collection did not appear in the persistent database. The earlier mutable 12-query personal-database run remains a smoke result (`0.958`/`0.958`/`0.952` at k=5), not the canonical benchmark. Expected-fact labels are present for future application-level evaluation; current metrics cover direct Chroma ranking only. |
+| Application memory scoring | Repaired and live-verified | The primary collections use Chroma's default squared-L2 distance, but `MemoryService` previously applied a discontinuous cosine-style conversion: a closer `0.865` result scored `0.135` while a worse `1.088` result scored `0.479`. Metric-aware conversion now maps normalized L2 vectors onto cosine-comparable scores. A matched live query changed from zero Cognitive Brain memories and a failed clarification to three LTM memories and correct recall of Tom and Leeds. |
+| Research escalation | Safety boundary implemented; cognitive drive pending | `ResearchService` separates need detection, authorization, and provider execution. The current `EscalationPolicy` is a deterministic first-line reflex gate for explicit requests, time sensitivity, low confidence, missing facts, and meta-cognitive gaps; it is not yet the intended brain-inspired deep-thinking controller. Decisions record IDs, reasons, disposition, provider/model, timestamps, estimated query size, and the enforced `question_only` context policy; packet logs add latency, context size, source/claim counts, and optional cost. `RESEARCH_ENABLED=false` is the default, `LOCAL_ONLY_MODE` overrides enablement, and the only runtime provider is fail-closed `disabled`. Discovery suggestions cannot authorize themselves. A multi-signal research drive and offline inquiry queue must precede any live cloud adapter. |
 | Salience network | Planned | There is a feature flag only; no `SalienceNetwork` implementation is present. |
-| Validation | Repaired baseline | The repository virtual environment runs `100 passed, 3 skipped` on August 2, 2026. This is a regression baseline, not evidence that learning or routing quality has been measured. The three skipped root-level async tests are not collected by an async test plugin. |
+| Validation | Repaired baseline | The repository virtual environment runs `116 passed, 3 skipped` on August 2, 2026. This is a regression baseline, not evidence that learning or routing quality has been measured. The three skipped root-level async tests are not collected by an async test plugin. |
 
 The phase sections below retain the design intent. Treat statements about autonomous background execution, measured performance improvements, or real-time streaming as planned unless this status section explicitly marks them implemented.
 
@@ -63,7 +65,20 @@ The two changes directly indicated by the August 1 measurements are implemented:
 - Meta-cognitive uncertainty generation is bounded by `META_COGNITIVE_MAX_OUTPUT_TOKENS` (default `64`) and a second hard `META_COGNITIVE_MAX_RESPONSE_WORDS` limit (default `40`).
 - Per-turn summary generation and STM-flush summarisation are enqueued through `BackgroundTaskQueue` when it is wired. A per-user lock serialises summary writes; isolated/test construction retains a synchronous fallback.
 
-The change was exercised in a live run and is covered by regression tests, but no comparable post-change `CYCLE_TIMING` sample has been preserved. It is therefore correct to say the critical-path work was removed, but not yet to claim a measured end-to-end latency improvement. Background work is in-process and is cancelled during application shutdown; it is not a durable job queue.
+Two matched post-change cycles were preserved with local agents and Gemini synthesis:
+
+| Stage | Cycle D (65.74s, before retrieval-score repair) | Cycle E (49.12s, after repair) | August 1 slow path |
+| --- | --- | --- | --- |
+| `stage1_agents` | 29.82s | 8.62s | 20.1-54.0s |
+| `stage2_agents` | 28.80s | 32.90s | 0-57.0s |
+| `meta_cognitive` | 0.54s | 0.53s | 20.1-25.0s when the uncertainty call fired |
+| `memory_upsert` | 3.92s | 4.24s | 16.0-21.8s |
+| `cognitive_brain_synthesis` | 2.38s | 2.60s | 3.0-3.2s |
+| deferred summary, outside response | 4.09s | 5.05s | included inside `memory_upsert` |
+
+The targeted stages are now validated: metacognition is about `98%` faster on the formerly unbounded path, and request-path memory work is about `74-81%` faster. End-to-end time still varies with generated agent tokens; Stage 1 and Stage 2 consumed `85-89%` of both measured cycles. Background work is in-process and is cancelled during application shutdown; it is not a durable job queue.
+
+The first matched run also exposed a retrieval correctness fault. Chroma's default collection metric is squared L2, while `_distance_to_score()` assumed cosine-style distance below `1.0` and reciprocal normalization above it. This discontinuity rejected the nearest brother-memory records at the default `0.5` threshold. Metric-aware conversion restored monotonic ranking and a second matched cycle retrieved three LTM records and correctly recalled `Tom` and `Leeds`.
 
 ## Table of Contents
 
@@ -338,6 +353,10 @@ python -m src.tools.eval_retrieval --build-template --sample 60
 # 3. Record the baseline against the existing vector space
 python -m src.tools.eval_retrieval --collection cognitive_cycles
 
+# Or run the canonical synthetic benchmark in an isolated ephemeral collection
+python -m src.tools.eval_retrieval --seeded \
+    --fixture tests/fixtures/memory_retrieval_seeded.json
+
 # 4. Rebuild into a new collection (source is left untouched)
 python -m src.tools.reembed --collection cognitive_cycles --dry-run
 python -m src.tools.reembed --collection cognitive_cycles
@@ -600,6 +619,8 @@ class WorkingMemoryContext:
 
 **Runtime status:** Job creation and execution methods exist. **Validation status:** End-to-end consolidation and retrieval impact are not measured. **Operational limitation:** Application startup does not schedule the periodic loop, and the current job/service contract has known call-signature mismatches.
 
+**Dream-cycle research boundary:** Consolidation may detect an unresolved contradiction, anomalous pattern, missing causal link, or high-value curiosity. This is analogous to offline recombination exposing a gap, not to waking perception authorizing an action. The dream cycle may persist an `InquiryCandidate` with its question, hypothesis, source-cycle provenance, uncertainty, novelty/prediction error, salience, expected information gain, and expiry. It must never contact a cloud provider. On a later waking cycle, the candidate must be re-evaluated against current memory, user relevance, cost/privacy policy, refractory limits, and—where required—user confirmation.
+
 **Key Features:**
 - **3 consolidation types**:
   1. **Episodic-to-semantic**: High-priority cycles (>0.7) → LLM generates narratives → extract semantic concepts
@@ -855,13 +876,14 @@ AgentOutput(
 
 **Implementation:** `src/agents/discovery_agent.py`
 
-**Purpose:** Identify knowledge gaps and execute web search to acquire new information before responding
+**Purpose:** Identify knowledge gaps, formulate candidate research queries, and submit them to a governed research boundary
 
 **Key Features:**
 - **Knowledge gap detection**: What don't we know that we need to know?
 - **Query formulation**: Generate effective search queries
-- **Web browsing trigger**: Call WebBrowsingService when needed
-- **Information synthesis**: Integrate discovered knowledge into response
+- **Advisory query formulation**: LLM suggestions do not themselves authorize external contact
+- **Policy-gated research**: `ResearchService` evaluates the original user query before any provider can run
+- **Structured outcomes**: Return an escalation decision and zero or more auditable research packets
 - **Curiosity-driven learning**: Proactively identify interesting unknowns
 
 **Activation Conditions (via ThalamusGateway):**
@@ -869,6 +891,20 @@ AgentOutput(
 - Context requires current/recent information
 - Knowledge gap detected by other agents
 - Deep context mode with questions
+
+**Runtime status:** Discovery no longer imports or calls `WebBrowsingService`. It passes the original user query and bounded candidate queries to `ResearchService`. Normal queries, disabled research, unavailable providers, and local-only mode return explicit non-executing dispositions. The legacy `web_search_results` output field remains empty for compatibility.
+
+##### Cognitive Research Drive (required control layer)
+
+The cloud model represents expensive, externally sourced deliberation. Its trigger should therefore resemble the functional control signals that recruit deeper human reasoning, while avoiding claims that the software literally has biological drives.
+
+1. **Local-first appraisal:** attempt memory retrieval and ordinary local reasoning before escalation, except for an explicit user research request or obviously volatile fact.
+2. **Evidence accumulation:** combine calibrated epistemic uncertainty, conflict between agents or memories, novelty/prediction error, temporal volatility, task stakes, repeated local failure, and expected information gain. No single LLM-generated suggestion is sufficient.
+3. **Effort allocation:** compare the accumulated research drive with cloud cost, privacy exposure, latency, user intent, and a refractory/cooldown state. Low-value curiosity remains local; high-stakes uncertainty lowers the threshold.
+4. **Action ladder:** deepen local retrieval/reasoning, ask a clarifying question, surface uncertainty, request user approval when policy requires it, and only then authorize external research.
+5. **Post-research learning:** record whether research changed the answer, resolved the conflict, improved confidence/calibration, and was worth its cost. Use those outcomes to tune thresholds, never to bypass hard safety or privacy gates.
+
+The controller should behave as a bounded evidence accumulator with hysteresis, not a keyword router. The existing deterministic rules remain useful as interpretable input signals and hard gates.
 
 **Agent Output Example:**
 ```python
@@ -955,13 +991,13 @@ class ActionRecommendation(Enum):
 **Integration Points:**
 - **OrchestrationService**: Pre-response gate that can override Cognitive Brain output
 - **MemoryService**: Historical performance data for domain expertise assessment
-- **WebBrowsingService**: Triggered for SEARCH_FIRST recommendations
+- **ResearchService**: Records the governed escalation decision for SEARCH_FIRST recommendations
 
 **SEARCH_FIRST execution flow:**
 1. Meta-Cognitive Monitor emits a SEARCH_FIRST recommendation with gap diagnostics.
-2. OrchestrationService pauses synthesis and dispatches the request to DiscoveryAgent.
-3. DiscoveryAgent invokes WebBrowsingService (Google Custom Search + summarization) to collect current facts.
-4. The resulting research packet is injected into Stage 2 context and Cognitive Brain synthesis resumes with grounded evidence.
+2. OrchestrationService sends the original query, confidence, and gap signals to the local `EscalationPolicy` through `ResearchService`.
+3. The complete decision is stored in cycle metadata. With the shipped configuration it is `blocked_disabled`, `blocked_local_only`, or `blocked_unavailable`, and no provider is invoked.
+4. Provider execution and injection of completed research packets into Cognitive Brain remain the next controlled slice; synthesis is not paused today.
 
 #### **Conflict Monitor**
 
@@ -1170,7 +1206,7 @@ The ECA implements a local, three-tier memory design inspired by human memory hi
 | Short-term memory | In-process, per-user `ShortTermMemory` cache of full `CognitiveCycle` objects, newest first; default budget is 25,000 estimated tokens. | Per-field embeddings are attempted but optional. Without them, STM semantic recall returns fewer or no matches. |
 | Conversation summary | One active summary per user stores topics, entities, context points, preferences, and identity hints. Each `upsert_cycle` enqueues its update when `BackgroundTaskQueue` is wired, with a per-user lock to prevent overlapping writes; otherwise it falls back to an inline update. | The queue is in-process rather than durable. Summary generation or embedding failure does not stop the conversation, and shutdown can cancel unfinished work, so a summary may be stale or unembedded. |
 | Long-term memory | ChromaDB persists full cycle JSON plus supplied vector embeddings, compact documents, and metadata. Patterns are stored separately. | Chroma retrieval order is normalized in application code; it is not a database ordering guarantee. |
-| Memory query | Query embedding, then STM cosine search, then Chroma vector search; results are merged and ranked by score. Default threshold is 0.5. | Direct Chroma ranking has a 12-query smoke baseline. The application-level relevance threshold, distance conversion, STM/LTM merge, and summary contribution have not been evaluated against the planned diverse labelled set. |
+| Memory query | Query embedding, then STM cosine search, then Chroma vector search; results are merged and ranked by score. Default threshold is 0.5. | Direct Chroma ranking has a reproducible 50-query synthetic baseline, and corrected L2 conversion passed a live recall check. The fixture's expected-fact labels are not yet exercised through `MemoryService`; threshold calibration, STM/LTM merge behavior, and summary contribution still need application-level evaluation. |
 | STM flush | On token pressure, the service queues summarisation of selected cycles when the background queue is wired; the worker ensures LTM upserts before removing them from STM. Without a queue it uses the synchronous path. | Signal emission is conditional on `DecisionEngine` wiring. The queue has no persistence or automatic retry/recovery, and unfinished work is cancelled on application shutdown. |
 | Episodic/semantic consolidation | `MemoryConsolidationService` can create jobs for episodic-to-semantic conversion, replay, and pattern extraction. | No periodic job loop is started by application startup. The currently implemented service has incompatible `MemoryService` calls that must be repaired before it can be relied upon. |
 
@@ -1341,7 +1377,7 @@ priority = 0.5  # baseline
 2. **LTM second**: Vector search ChromaDB, then merge and rank results
 3. **Summary separately**: CognitiveBrain loads the current summary for synthesis; `query_memory()` does not currently rank summary documents alongside cycle results
 
-**Scoring note:** STM uses cosine similarity against optional per-field embeddings. LTM converts Chroma distances to a heuristic $[0, 1]$ score. The default relevance threshold is 0.5; neither scoring calibration nor any summary-based boost has been validated.
+**Scoring note:** STM uses cosine similarity against optional per-field embeddings. LTM conversion is metric-aware: the default squared-L2 distance is converted with $1-d/2$ for the active unit-normalized vectors, while explicit cosine/IP collections use $1-d$. This repaired a discontinuity that rejected the nearest LTM results. The default relevance threshold remains 0.5; broader calibration and any summary-based boost have not been validated against a diverse corpus.
 
 **Known limitations:** STM and the immediate transcript are per-process; LTM is the cross-session record. Chroma cycles are sorted in memory after retrieval for transcript views. Embedding model versions must never be mixed in one collection; the identity guard enforces this for the primary collections.
 
@@ -2772,7 +2808,7 @@ ActionRecommendation = {
 
 ### Known Limitations
 
-- **WebBrowsingService**: Performs real search and scraping, but some sites block non-browser traffic (403) or require JS; we degrade gracefully to titles/snippets when scraping fails
+- **Research provider**: The legacy `WebBrowsingService` implementation remains in the tree for migration history but is no longer instantiated or reachable from Discovery. Only the fail-closed disabled research provider ships; current external research is unavailable.
 - **Consolidation Scaling**: Background loop processes one user at a time (needs parallelization for multi-user)
 - **Multimodal Processing**: Image and audio processing infrastructure present but not fully activated
 

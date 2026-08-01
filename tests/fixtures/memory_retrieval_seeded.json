@@ -1,0 +1,184 @@
+{
+  "version": 2,
+  "source_collection": "retrieval_eval_seed_v1",
+  "notes": "Synthetic, reproducible retrieval corpus. Records contain no personal-memory exports. Every query is a reviewed paraphrase and includes the fact expected from its relevant record.",
+  "records": [
+    {
+      "id": "r001_preferred_name",
+      "document": "User: My full name is Rowan Chen, but please call me Ro in casual conversation. Response: Understood; I will use Ro unless a formal name is needed.",
+      "metadata": {"category": "identity", "temporal": false}
+    },
+    {
+      "id": "r002_home_location",
+      "document": "User: I live in Island Bay, a coastal suburb of Wellington. Response: I will remember that your home is in Island Bay, Wellington.",
+      "metadata": {"category": "identity", "temporal": false}
+    },
+    {
+      "id": "r003_tea_preference",
+      "document": "User: My usual tea is Earl Grey with lemon and no milk. Response: Earl Grey with lemon, without milk, is your standard tea order.",
+      "metadata": {"category": "preference", "temporal": false}
+    },
+    {
+      "id": "r004_dietary_constraints",
+      "document": "User: I eat vegetarian food and I am allergic to walnuts. Response: Meal suggestions should be vegetarian and must exclude walnuts.",
+      "metadata": {"category": "constraint", "temporal": false}
+    },
+    {
+      "id": "r005_sister_pet",
+      "document": "User: My sister Maya adopted a rescue cat called Comet on July 14, 2026. Response: Maya's rescue cat is named Comet, adopted on July 14, 2026.",
+      "metadata": {"category": "relationship", "temporal": true, "date": "2026-07-14"}
+    },
+    {
+      "id": "r006_brother_move",
+      "document": "User: My brother Leo is moving to Dunedin in September 2026 for a marine biology role. Response: Leo's September move to Dunedin is for his marine biology job.",
+      "metadata": {"category": "relationship", "temporal": true, "date": "2026-09"}
+    },
+    {
+      "id": "r007_project_deadline",
+      "document": "User: Project Aurora's client demonstration is due on August 18, 2026, and the data import must be ready first. Response: Aurora's demo deadline is August 18, with data import as the prerequisite.",
+      "metadata": {"category": "work", "temporal": true, "date": "2026-08-18"}
+    },
+    {
+      "id": "r008_dentist_appointment",
+      "document": "User: My dentist appointment is Tuesday, August 11, 2026 at 2:30 PM. Response: The dental appointment is booked for August 11 at 2:30 PM.",
+      "metadata": {"category": "appointment", "temporal": true, "date": "2026-08-11T14:30:00"}
+    },
+    {
+      "id": "r009_queenstown_trip",
+      "document": "User: The Queenstown trip runs from September 5 through September 9, 2026, and the lakefront hotel is already booked. Response: Queenstown is September 5-9 and the lakefront accommodation is confirmed.",
+      "metadata": {"category": "travel", "temporal": true, "date": "2026-09-05"}
+    },
+    {
+      "id": "r010_car_wof",
+      "document": "User: The car's warrant of fitness expires on August 27, 2026. Response: The WOF renewal needs attention before August 27.",
+      "metadata": {"category": "maintenance", "temporal": true, "date": "2026-08-27"}
+    },
+    {
+      "id": "r011_presentation_emotion",
+      "document": "User: I felt anxious before the research presentation, but afterward I was proud that I answered every question clearly. Response: The presentation shifted from anticipatory anxiety to pride and relief.",
+      "metadata": {"category": "emotion", "temporal": false}
+    },
+    {
+      "id": "r012_colour_correction",
+      "document": "User: I first said the studio wall should be blue, but that was a mistake; the final choice is forest green. Response: The corrected and current wall colour is forest green, not blue.",
+      "metadata": {"category": "correction", "temporal": false}
+    },
+    {
+      "id": "r013_favourite_book",
+      "document": "User: My favourite novel is The Dispossessed by Ursula K. Le Guin because of its political and social ideas. Response: The Dispossessed is your favourite novel, especially for its ideas.",
+      "metadata": {"category": "preference", "temporal": false}
+    },
+    {
+      "id": "r014_sourdough_routine",
+      "document": "User: I feed the sourdough starter on Friday night so I can bake on Saturday morning. Response: The bread routine is Friday-night feeding followed by Saturday-morning baking.",
+      "metadata": {"category": "routine", "temporal": false}
+    },
+    {
+      "id": "r015_invoice_contact",
+      "document": "User: Morgan handles supplier invoices and is available for approvals on Tuesdays. Response: Invoice questions and Tuesday approvals go to Morgan.",
+      "metadata": {"category": "work", "temporal": false}
+    },
+    {
+      "id": "r016_laptop_fan_issue",
+      "document": "User: The laptop fan becomes very loud only while exporting video, not during ordinary browsing. Response: The fan issue is tied specifically to video export workloads.",
+      "metadata": {"category": "technical", "temporal": false}
+    },
+    {
+      "id": "r017_tomato_garden",
+      "document": "User: The cherry tomatoes are in the north garden bed and need deep watering every second morning. Response: North-bed cherry tomatoes follow an every-other-morning deep-watering schedule.",
+      "metadata": {"category": "garden", "temporal": false}
+    },
+    {
+      "id": "r018_father_gift",
+      "document": "User: Dad's birthday is October 3, and I plan to give him a printed family photo book. Response: The October 3 birthday gift plan is a printed family photo book.",
+      "metadata": {"category": "relationship", "temporal": true, "date": "2026-10-03"}
+    },
+    {
+      "id": "r019_subscription_cancel",
+      "document": "User: Cancel the StreamBox subscription before it renews on August 20, 2026. Response: StreamBox must be cancelled before the August 20 renewal.",
+      "metadata": {"category": "finance", "temporal": true, "date": "2026-08-20"}
+    },
+    {
+      "id": "r020_physiotherapy_routine",
+      "document": "User: My physiotherapist asked me to do the shoulder mobility routine after lunch on weekdays. Response: The remembered routine is shoulder mobility after weekday lunches.",
+      "metadata": {"category": "routine", "temporal": false}
+    },
+    {
+      "id": "r021_database_decision",
+      "document": "User: For the analytics service we decided on PostgreSQL rather than SQLite because concurrent writes matter. Response: PostgreSQL is the chosen analytics database; concurrency ruled out SQLite.",
+      "metadata": {"category": "decision", "temporal": false}
+    },
+    {
+      "id": "r022_notification_policy",
+      "document": "User: Product notifications should be opt-in and bundled into one weekly digest. Response: The notification policy is explicit opt-in with weekly batching.",
+      "metadata": {"category": "decision", "temporal": false}
+    },
+    {
+      "id": "r023_friend_visit",
+      "document": "User: My friend Priya will visit Rotorua from November 12 to November 15, 2026. Response: Priya's Rotorua visit is scheduled for November 12-15.",
+      "metadata": {"category": "relationship", "temporal": true, "date": "2026-11-12"}
+    },
+    {
+      "id": "r024_spanish_practice",
+      "document": "User: I practise Spanish for twenty minutes each morning before checking email. Response: Spanish practice is a twenty-minute pre-email morning habit.",
+      "metadata": {"category": "learning", "temporal": false}
+    },
+    {
+      "id": "r025_desk_setup",
+      "document": "User: I moved the desk beside the east window and added a monitor arm to free writing space. Response: The desk is by the east window, and the monitor arm created more writing room.",
+      "metadata": {"category": "environment", "temporal": false}
+    }
+  ],
+  "queries": [
+    {"id": "q001", "query": "What should you call me when we're chatting informally?", "relevant_ids": ["r001_preferred_name"], "expected_facts": ["Use Ro casually"], "tags": ["identity", "paraphrase"], "reviewed": true},
+    {"id": "q002", "query": "Remind me of my full name and my preferred short name.", "relevant_ids": ["r001_preferred_name"], "expected_facts": ["Full name Rowan Chen", "Preferred name Ro"], "tags": ["identity", "multi_fact"], "reviewed": true},
+    {"id": "q003", "query": "Which part of Wellington do I live in?", "relevant_ids": ["r002_home_location"], "expected_facts": ["Island Bay"], "tags": ["location", "paraphrase"], "reviewed": true},
+    {"id": "q004", "query": "Is my home inland or in a coastal suburb?", "relevant_ids": ["r002_home_location"], "expected_facts": ["Coastal suburb of Island Bay"], "tags": ["location", "inference"], "reviewed": true},
+    {"id": "q005", "query": "How do I normally take my tea?", "relevant_ids": ["r003_tea_preference"], "expected_facts": ["Earl Grey", "Lemon", "No milk"], "tags": ["preference", "multi_fact"], "reviewed": true},
+    {"id": "q006", "query": "Would milk belong in my standard Earl Grey order?", "relevant_ids": ["r003_tea_preference"], "expected_facts": ["No milk"], "tags": ["preference", "negation"], "reviewed": true},
+    {"id": "q007", "query": "What restrictions must a meal suggestion respect for me?", "relevant_ids": ["r004_dietary_constraints"], "expected_facts": ["Vegetarian", "No walnuts"], "tags": ["constraint", "multi_fact"], "reviewed": true},
+    {"id": "q008", "query": "Which nut do I need excluded from recipes?", "relevant_ids": ["r004_dietary_constraints"], "expected_facts": ["Walnuts"], "tags": ["constraint", "specific_fact"], "reviewed": true},
+    {"id": "q009", "query": "Who adopted Comet?", "relevant_ids": ["r005_sister_pet"], "expected_facts": ["Maya"], "tags": ["relationship", "entity"], "reviewed": true},
+    {"id": "q010", "query": "When did my sister get her rescue cat, and what is the cat called?", "relevant_ids": ["r005_sister_pet"], "expected_facts": ["Comet", "July 14, 2026"], "tags": ["relationship", "temporal", "multi_fact"], "reviewed": true},
+    {"id": "q011", "query": "Where is Leo relocating for work?", "relevant_ids": ["r006_brother_move"], "expected_facts": ["Dunedin"], "tags": ["relationship", "location"], "reviewed": true},
+    {"id": "q012", "query": "What job is taking my brother to Dunedin, and when?", "relevant_ids": ["r006_brother_move"], "expected_facts": ["Marine biology role", "September 2026"], "tags": ["relationship", "temporal", "multi_fact"], "reviewed": true},
+    {"id": "q013", "query": "What must be ready before Project Aurora's client demo?", "relevant_ids": ["r007_project_deadline"], "expected_facts": ["Data import"], "tags": ["work", "dependency"], "reviewed": true},
+    {"id": "q014", "query": "Give me Aurora's demonstration deadline.", "relevant_ids": ["r007_project_deadline"], "expected_facts": ["August 18, 2026"], "tags": ["work", "temporal"], "reviewed": true},
+    {"id": "q015", "query": "What time is the dentist booking on August 11?", "relevant_ids": ["r008_dentist_appointment"], "expected_facts": ["2:30 PM"], "tags": ["appointment", "temporal"], "reviewed": true},
+    {"id": "q016", "query": "Which Tuesday appointment do I have at half past two?", "relevant_ids": ["r008_dentist_appointment"], "expected_facts": ["Dentist", "August 11, 2026"], "tags": ["appointment", "paraphrase"], "reviewed": true},
+    {"id": "q017", "query": "What are the dates of the Queenstown holiday?", "relevant_ids": ["r009_queenstown_trip"], "expected_facts": ["September 5-9, 2026"], "tags": ["travel", "temporal"], "reviewed": true},
+    {"id": "q018", "query": "Has accommodation been arranged for my September trip?", "relevant_ids": ["r009_queenstown_trip"], "expected_facts": ["Lakefront hotel already booked"], "tags": ["travel", "status"], "reviewed": true},
+    {"id": "q019", "query": "When does the car's WOF run out?", "relevant_ids": ["r010_car_wof"], "expected_facts": ["August 27, 2026"], "tags": ["maintenance", "temporal"], "reviewed": true},
+    {"id": "q020", "query": "What vehicle task needs doing before the end of August?", "relevant_ids": ["r010_car_wof"], "expected_facts": ["Renew WOF before August 27"], "tags": ["maintenance", "paraphrase"], "reviewed": true},
+    {"id": "q021", "query": "How did my feelings change across the research presentation?", "relevant_ids": ["r011_presentation_emotion"], "expected_facts": ["Anxious before", "Proud and relieved afterward"], "tags": ["emotion", "transition"], "reviewed": true},
+    {"id": "q022", "query": "What made me proud after being nervous?", "relevant_ids": ["r011_presentation_emotion"], "expected_facts": ["Answered every presentation question clearly"], "tags": ["emotion", "cause"], "reviewed": true},
+    {"id": "q023", "query": "What is the final colour chosen for the studio wall?", "relevant_ids": ["r012_colour_correction"], "expected_facts": ["Forest green"], "tags": ["correction", "current_fact"], "reviewed": true},
+    {"id": "q024", "query": "Was blue still the current wall choice after the correction?", "relevant_ids": ["r012_colour_correction"], "expected_facts": ["No", "Forest green replaced blue"], "tags": ["correction", "negation"], "reviewed": true},
+    {"id": "q025", "query": "Which Ursula K. Le Guin novel is my favourite?", "relevant_ids": ["r013_favourite_book"], "expected_facts": ["The Dispossessed"], "tags": ["preference", "book"], "reviewed": true},
+    {"id": "q026", "query": "Why did I say I especially value The Dispossessed?", "relevant_ids": ["r013_favourite_book"], "expected_facts": ["Political and social ideas"], "tags": ["preference", "reason"], "reviewed": true},
+    {"id": "q027", "query": "When do I feed my bread starter?", "relevant_ids": ["r014_sourdough_routine"], "expected_facts": ["Friday night"], "tags": ["routine", "temporal"], "reviewed": true},
+    {"id": "q028", "query": "What is the two-step weekend sourdough schedule?", "relevant_ids": ["r014_sourdough_routine"], "expected_facts": ["Feed Friday night", "Bake Saturday morning"], "tags": ["routine", "sequence"], "reviewed": true},
+    {"id": "q029", "query": "Who should receive questions about supplier invoices?", "relevant_ids": ["r015_invoice_contact"], "expected_facts": ["Morgan"], "tags": ["work", "contact"], "reviewed": true},
+    {"id": "q030", "query": "On which day is Morgan available to approve invoices?", "relevant_ids": ["r015_invoice_contact"], "expected_facts": ["Tuesdays"], "tags": ["work", "temporal"], "reviewed": true},
+    {"id": "q031", "query": "Which workload makes my laptop fan noisy?", "relevant_ids": ["r016_laptop_fan_issue"], "expected_facts": ["Exporting video"], "tags": ["technical", "cause"], "reviewed": true},
+    {"id": "q032", "query": "Does ordinary web browsing trigger the loud fan problem?", "relevant_ids": ["r016_laptop_fan_issue"], "expected_facts": ["No", "Only video exports"], "tags": ["technical", "negation"], "reviewed": true},
+    {"id": "q033", "query": "Where are the cherry tomatoes planted?", "relevant_ids": ["r017_tomato_garden"], "expected_facts": ["North garden bed"], "tags": ["garden", "location"], "reviewed": true},
+    {"id": "q034", "query": "How often should I deeply water the tomatoes?", "relevant_ids": ["r017_tomato_garden"], "expected_facts": ["Every second morning"], "tags": ["garden", "routine"], "reviewed": true},
+    {"id": "q035", "query": "What am I planning to give Dad for his birthday?", "relevant_ids": ["r018_father_gift"], "expected_facts": ["Printed family photo book"], "tags": ["relationship", "gift"], "reviewed": true},
+    {"id": "q036", "query": "On what date is the photo-book gift needed?", "relevant_ids": ["r018_father_gift"], "expected_facts": ["October 3"], "tags": ["relationship", "temporal"], "reviewed": true},
+    {"id": "q037", "query": "Which streaming service should be cancelled?", "relevant_ids": ["r019_subscription_cancel"], "expected_facts": ["StreamBox"], "tags": ["finance", "task"], "reviewed": true},
+    {"id": "q038", "query": "What is the deadline for avoiding the StreamBox renewal?", "relevant_ids": ["r019_subscription_cancel"], "expected_facts": ["Before August 20, 2026"], "tags": ["finance", "temporal"], "reviewed": true},
+    {"id": "q039", "query": "When during a weekday should I do the shoulder routine?", "relevant_ids": ["r020_physiotherapy_routine"], "expected_facts": ["After lunch"], "tags": ["routine", "temporal"], "reviewed": true},
+    {"id": "q040", "query": "What exercise habit did the physiotherapist ask me to remember?", "relevant_ids": ["r020_physiotherapy_routine"], "expected_facts": ["Shoulder mobility on weekdays"], "tags": ["routine", "source"], "reviewed": true},
+    {"id": "q041", "query": "Which database did we select for the analytics service?", "relevant_ids": ["r021_database_decision"], "expected_facts": ["PostgreSQL"], "tags": ["decision", "technical"], "reviewed": true},
+    {"id": "q042", "query": "Why was SQLite rejected for analytics?", "relevant_ids": ["r021_database_decision"], "expected_facts": ["Concurrent writes matter"], "tags": ["decision", "reason"], "reviewed": true},
+    {"id": "q043", "query": "Should product notifications be enabled automatically?", "relevant_ids": ["r022_notification_policy"], "expected_facts": ["No", "Explicit opt-in"], "tags": ["decision", "negation"], "reviewed": true},
+    {"id": "q044", "query": "How frequently should opted-in notifications be delivered?", "relevant_ids": ["r022_notification_policy"], "expected_facts": ["One weekly digest"], "tags": ["decision", "frequency"], "reviewed": true},
+    {"id": "q045", "query": "Who is visiting Rotorua in November?", "relevant_ids": ["r023_friend_visit"], "expected_facts": ["Priya"], "tags": ["relationship", "entity"], "reviewed": true},
+    {"id": "q046", "query": "What dates cover Priya's Rotorua visit?", "relevant_ids": ["r023_friend_visit"], "expected_facts": ["November 12-15, 2026"], "tags": ["relationship", "temporal"], "reviewed": true},
+    {"id": "q047", "query": "How long is my daily Spanish practice?", "relevant_ids": ["r024_spanish_practice"], "expected_facts": ["Twenty minutes"], "tags": ["learning", "duration"], "reviewed": true},
+    {"id": "q048", "query": "Do I practise Spanish before or after reading email?", "relevant_ids": ["r024_spanish_practice"], "expected_facts": ["Before checking email"], "tags": ["learning", "sequence"], "reviewed": true},
+    {"id": "q049", "query": "Where did I move the desk?", "relevant_ids": ["r025_desk_setup"], "expected_facts": ["Beside the east window"], "tags": ["environment", "location"], "reviewed": true},
+    {"id": "q050", "query": "What change freed more writing space on the desk?", "relevant_ids": ["r025_desk_setup"], "expected_facts": ["Added a monitor arm"], "tags": ["environment", "cause"], "reviewed": true}
+  ]
+}

@@ -15,7 +15,7 @@ from src.agents.planning_agent import PlanningAgent
 from src.agents.creative_agent import CreativeAgent
 from src.agents.critic_agent import CriticAgent
 from src.agents.discovery_agent import DiscoveryAgent
-from src.services.web_browsing_service import WebBrowsingService
+from src.services.research_service import ResearchService
 from src.services.audio_input_processor import AudioInputProcessor
 from src.models.multimodal_models import AudioAnalysis
 from src.services.cognitive_brain import CognitiveBrain
@@ -66,7 +66,7 @@ class OrchestrationService:
         creative_agent: CreativeAgent,
         critic_agent: CriticAgent,
         discovery_agent: DiscoveryAgent,
-        web_browsing_service: WebBrowsingService,
+        research_service: Optional[ResearchService],
         cognitive_brain: CognitiveBrain,
         memory_service: MemoryService,
         background_task_queue: BackgroundTaskQueue,
@@ -90,7 +90,7 @@ class OrchestrationService:
         self.creative_agent = creative_agent
         self.critic_agent = critic_agent
         self.discovery_agent = discovery_agent
-        self.web_browsing_service = web_browsing_service
+        self.research_service = research_service
         self.audio_input_processor = audio_input_processor
         self.cognitive_brain = cognitive_brain
         self.memory_service = memory_service
@@ -688,9 +688,22 @@ class OrchestrationService:
                 # Handle non-answer recommendations
                 if recommendation != ActionRecommendation.ANSWER:
                     if recommendation == ActionRecommendation.SEARCH_FIRST:
-                        # Trigger web search via DiscoveryAgent
-                        logger.info(f"Meta-cognitive: Triggering web search for knowledge gap - {explanation}")
-                        # This will be handled by setting a flag for later processing
+                        if self.research_service:
+                            decision = self.research_service.decide(
+                                effective_input_text,
+                                source="meta_cognitive_monitor",
+                                confidence=confidence_score,
+                                named_fact_missing=gap_type == GapType.TOPIC_UNKNOWN,
+                                metacognitive_gap=True,
+                            )
+                            cognitive_cycle.metadata["research_escalation"] = decision.model_dump(mode="json")
+                            logger.info(
+                                "Meta-cognitive research recommendation recorded as %s - %s",
+                                decision.disposition.value,
+                                explanation,
+                            )
+                        else:
+                            logger.warning("Meta-cognitive research recommendation had no ResearchService boundary.")
 
                     elif recommendation in [ActionRecommendation.ASK_CLARIFICATION, ActionRecommendation.DECLINE_POLITELY]:
                         # Generate uncertainty response

@@ -204,7 +204,7 @@ pytest tests/test_llm_integration_service.py -v
 - **Single-user optimization**: RL and habits are per-user; cross-user generalization not yet implemented
 - **LLM dependency**: Current code is Gemini-specific; the roadmap migrates routine cognition to local Ollama providers.
 - **Consolidation scheduling**: The service exists, but its periodic loop is not wired into application startup.
-- **Research retrieval**: Direct web browsing is being replaced by explicit cloud research escalation.
+- **Research retrieval**: Legacy direct browsing is disconnected; external research now has a deterministic, disabled-by-default policy boundary, with a live grounded provider still pending.
 
 ---
 

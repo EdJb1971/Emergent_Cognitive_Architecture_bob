@@ -1,46 +1,43 @@
 import logging
 import json
-from typing import Dict, Any, Optional, List
+from typing import Optional, List
 from uuid import UUID
 
-from src.core.exceptions import LLMServiceException, AgentServiceException, APIException
+from src.core.exceptions import LLMServiceException, AgentServiceException
 from src.services.llm_integration_service import LLMIntegrationService
-from src.services.memory_service import MemoryService
-from src.models.core_models import MemoryQueryRequest
-from src.models.core_models import AgentOutput
+from src.models.core_models import AgentOutput, MemoryQueryRequest
 from src.models.agent_models import DiscoveryAnalysis
 from src.core.config import settings
-from src.services.web_browsing_service import WebBrowsingService
-from src.agents.utils import UUIDEncoder
-from src.agents.utils import compact_agent_outputs, estimate_tokens
-
-from src.agents.utils import extract_json_from_response
+from src.services.research_service import ResearchService
+from src.agents.utils import compact_agent_outputs, extract_json_from_response
 
 logger = logging.getLogger(__name__)
 
 class DiscoveryAgent:
     """
     Specialized AI agent that identifies knowledge gaps, generates curiosities, and proposes explorations
-    based on the user input and current context. Now enhanced to leverage the Web Browsing Service for external information gathering.
+    based on the user input and current context. External research can only occur through
+    the deterministic ResearchService policy boundary.
     Outputs structured data including identified gaps, curiosities, confidence, and priority.
     """
     AGENT_ID = "discovery_agent"
     MODEL_NAME = settings.LLM_MODEL_NAME
 
-    def __init__(self, llm_service: LLMIntegrationService, memory_service, web_browsing_service: WebBrowsingService):
+    def __init__(self, llm_service: LLMIntegrationService, memory_service, research_service: ResearchService):
         self.llm_service = llm_service
         self.memory_service = memory_service
-        self.web_browsing_service = web_browsing_service
-        logger.info(f"{self.AGENT_ID} initialized with memory integration.")
+        self.research_service = research_service
+        logger.info(f"{self.AGENT_ID} initialized with memory and governed research integration.")
 
-    async def process_input(self, user_input: str, user_id: UUID, other_agent_outputs: Optional[List[AgentOutput]] = None) -> AgentOutput:
+    async def process_input(self, user_input: str, user_id: Optional[UUID] = None, other_agent_outputs: Optional[List[AgentOutput]] = None) -> AgentOutput:
         """
         Processes user input and the outputs of other agents to identify knowledge gaps and curiosities.
-        Now includes logic to trigger web browsing for external information gathering.
+        Research suggestions from the LLM are advisory. The original user query must
+        independently satisfy the local escalation policy before any provider is called.
 
         Args:
             user_input (str): The user's input text.
-            user_id (UUID): The ID of the user initiating the discovery (for web browsing audit).
+            user_id (Optional[UUID]): The user initiating the discovery, used for audit correlation.
             other_agent_outputs (Optional[List[AgentOutput]]): List of outputs from other agents.
 
         Returns:
@@ -56,7 +53,6 @@ class DiscoveryAgent:
         if user_id is not None:
             summary = await self.memory_service.summary_manager.get_or_create_summary(user_id)
             summary_text = summary.summary_text if hasattr(summary, "summary_text") else ""
-            from src.models.core_models import MemoryQueryRequest
             query_request = MemoryQueryRequest(
                 user_id=user_id,
                 query_text=user_input,
@@ -79,7 +75,7 @@ class DiscoveryAgent:
         initial_discovery_prompt = f"""
         Analyze the following context to identify knowledge gaps, generate curiosities, and propose initial explorations.
         Use the provided memory context and agent outputs to inform your discovery analysis.
-        Consider if any of the proposed explorations would benefit from external web research.
+        Suggest concise external research queries only when fresh outside information would materially help.
         
         Provide your analysis in a JSON object with the following structure:
         {{
@@ -87,7 +83,7 @@ class DiscoveryAgent:
             "curiosities_generated": ["curiosity1", "curiosity2", ...],
             "proposed_explorations": ["exploration1", "exploration2", ...],
             "discovery_priority": 1-10,
-            "potential_web_searches": ["search query 1", "search query 2", ...] // New field for web search suggestions
+            "potential_research_queries": ["research query 1", "research query 2", ...]
         }}
         Ensure the output is a valid JSON string.
 
@@ -104,56 +100,33 @@ class DiscoveryAgent:
             
             analysis_data = extract_json_from_response(llm_response_str)
             
-            # Extract potential web searches
-            potential_web_searches = analysis_data.pop("potential_web_searches", [])
-            
-            web_search_results = []
-            # Determine if browsing is enabled via the service's capability method or legacy attribute
-            browsing_enabled = False
-            is_enabled_fn = getattr(self.web_browsing_service, "is_enabled", None)
-            if callable(is_enabled_fn):
-                try:
-                    browsing_enabled = is_enabled_fn()
-                except Exception:
-                    browsing_enabled = False
-            else:
-                browsing_enabled = bool(getattr(self.web_browsing_service, "serpapi_api_key", None))
+            potential_research_queries = analysis_data.pop("potential_research_queries", None)
+            if potential_research_queries is None:
+                potential_research_queries = analysis_data.pop("potential_web_searches", [])
+            if not isinstance(potential_research_queries, list):
+                potential_research_queries = []
 
-            if potential_web_searches and browsing_enabled:
-                logger.info(f"{self.AGENT_ID}: Initiating {len(potential_web_searches)} web searches for user {user_id}.")
-                for query in potential_web_searches:
-                    # SEC-LLM-003 Fix: Moderate LLM-generated queries before passing to WebBrowsingService
-                    moderation_result = await self.llm_service.moderate_content(query)
-                    if not moderation_result.get("is_safe"):
-                        logger.warning(f"{self.AGENT_ID}: LLM-generated web search query blocked due to safety concerns for user {user_id}: '{query[:50]}...'. Reason: {moderation_result.get('block_reason', 'N/A')}")
-                        web_search_results.append({"query": query, "summary": "Web search query blocked due to safety concerns.", "source": "moderation_blocked"})
-                        continue # Skip this unsafe query
-
-                    try:
-                        # Call the WebBrowsingService
-                        result = await self.web_browsing_service.browse_and_scrape(query, user_id)
-                        web_search_results.append(result)
-                    except APIException as e:
-                        logger.warning(f"{self.AGENT_ID}: Web browsing failed for query '{query}': {e.detail}")
-                        web_search_results.append({"query": query, "summary": f"Failed to retrieve web content: {e.detail}", "source": "web_browsing_service_error"})
-                    except Exception as e:
-                        logger.error(f"{self.AGENT_ID}: Unexpected error during web browsing for query '{query}': {e}", exc_info=True)
-                        web_search_results.append({"query": query, "summary": f"Unexpected error during web browsing: {e}", "source": "web_browsing_service_error"})
-            
-            # If web browsing not configured, note it to avoid repeated warnings
-            if potential_web_searches and not browsing_enabled:
-                logger.info(f"{self.AGENT_ID}: Web browsing is disabled (no SERPAPI_API_KEY). Skipping {len(potential_web_searches)} suggested searches.")
-
-            # Add web search results to the analysis data
-            analysis_data["web_search_results"] = web_search_results
+            research_outcome = await self.research_service.consider(
+                user_query=user_input,
+                candidate_queries=[str(query) for query in potential_research_queries],
+                source=self.AGENT_ID,
+            )
+            analysis_data["research"] = research_outcome.model_dump(mode="json")
+            analysis_data["web_search_results"] = []
 
             discovery_analysis = DiscoveryAnalysis(**analysis_data)
 
-            logger.info(f"{self.AGENT_ID} successfully processed input. Gaps: {discovery_analysis.knowledge_gaps[:3]}. Web searches performed: {len(web_search_results)}")
+            logger.info(
+                "%s successfully processed input. Gaps: %s. Research disposition: %s; packets: %d",
+                self.AGENT_ID,
+                discovery_analysis.knowledge_gaps[:3],
+                research_outcome.decision.disposition.value,
+                len(research_outcome.packets),
+            )
 
             return AgentOutput(
                 agent_id=self.AGENT_ID,
-                analysis=discovery_analysis.model_dump(),
+                analysis=discovery_analysis.model_dump(mode="json"),
                 confidence=0.75, 
                 priority=3,     
                 raw_output=llm_response_str

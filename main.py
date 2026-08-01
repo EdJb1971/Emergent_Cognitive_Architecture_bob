@@ -34,7 +34,8 @@ from src.agents.planning_agent import PlanningAgent
 from src.agents.creative_agent import CreativeAgent
 from src.agents.critic_agent import CriticAgent
 from src.agents.discovery_agent import DiscoveryAgent
-from src.services.web_browsing_service import WebBrowsingService
+from src.services.escalation_policy import EscalationPolicy
+from src.services.research_service import DisabledResearchProvider, ResearchService
 from src.services.audio_input_processor import AudioInputProcessor
 from src.providers import ModelExecutionScheduler, OllamaProbe
 from src.providers.factory import build_active_provider, build_synthesis_provider, enforce_local_only
@@ -271,8 +272,31 @@ async def lifespan(app: FastAPI):
         )
         logger.info("CriticAgent initialized successfully.")
 
-        app.state.web_browsing_service = WebBrowsingService(llm_service=app.state.llm_service)
-        logger.info("WebBrowsingService initialized successfully.")
+        research_provider_choice = settings.RESEARCH_PROVIDER.strip().lower()
+        if research_provider_choice != "disabled":
+            raise ConfigurationError(
+                detail=(
+                    f"Unsupported RESEARCH_PROVIDER '{settings.RESEARCH_PROVIDER}'. "
+                    "This slice intentionally ships only the fail-closed 'disabled' provider."
+                )
+            )
+        app.state.escalation_policy = EscalationPolicy(
+            research_enabled=settings.RESEARCH_ENABLED,
+            local_only=settings.LOCAL_ONLY_MODE,
+            low_confidence_threshold=settings.RESEARCH_LOW_CONFIDENCE_THRESHOLD,
+        )
+        app.state.research_service = ResearchService(
+            policy=app.state.escalation_policy,
+            provider=DisabledResearchProvider(),
+            max_queries=settings.RESEARCH_MAX_QUERIES,
+            max_query_chars=settings.RESEARCH_MAX_QUERY_CHARS,
+        )
+        logger.info(
+            "ResearchService initialized (enabled=%s, provider=%s, local_only=%s).",
+            settings.RESEARCH_ENABLED,
+            research_provider_choice,
+            settings.LOCAL_ONLY_MODE,
+        )
 
         # Initialize AudioInputProcessor (multimodal: speech-to-text via LLM)
         app.state.audio_input_processor = AudioInputProcessor(llm_service=app.state.llm_service)
@@ -281,7 +305,7 @@ async def lifespan(app: FastAPI):
         app.state.discovery_agent = DiscoveryAgent(
             llm_service=app.state.llm_service,
             memory_service=app.state.memory_service,
-            web_browsing_service=app.state.web_browsing_service,
+            research_service=app.state.research_service,
         )
         logger.info("DiscoveryAgent initialized successfully.")
 
@@ -312,7 +336,7 @@ async def lifespan(app: FastAPI):
             creative_agent=app.state.creative_agent,
             critic_agent=app.state.critic_agent,
             discovery_agent=app.state.discovery_agent,
-            web_browsing_service=app.state.web_browsing_service,
+            research_service=app.state.research_service,
             audio_input_processor=app.state.audio_input_processor,
             cognitive_brain=app.state.cognitive_brain,
             memory_service=app.state.memory_service,
@@ -1102,7 +1126,7 @@ async def list_agents_endpoint(request_obj: Request, user_id: UUID = APIKeyAuth)
         {"agent_id": request_obj.app.state.creative_agent.AGENT_ID, "description": "Generates novel perspectives, analogies, and reframings."},
         {"agent_id": request_obj.app.state.critic_agent.AGENT_ID, "description": "Checks for logic, contradictions, and coherence in inputs and outputs."},
         {"agent_id": request_obj.app.state.discovery_agent.AGENT_ID, "description": "Identifies knowledge gaps, generates curiosities, and proposes explorations."},
-        {"agent_id": request_obj.app.state.web_browsing_service.SERVICE_ID, "description": "A sandboxed backend service that enables autonomous web exploration."}
+        {"agent_id": request_obj.app.state.research_service.SERVICE_ID, "description": "A policy-gated, auditable boundary for explicit external research."}
     ]
     logger.info("Listed all available agents.")
     return agents_info
@@ -1568,7 +1592,7 @@ async def deep_health_check_endpoint(request_obj: Request):
         ("creative_agent", request_obj.app.state.creative_agent),
         ("critic_agent", request_obj.app.state.critic_agent),
         ("discovery_agent", request_obj.app.state.discovery_agent),
-        ("web_browsing_service", request_obj.app.state.web_browsing_service)
+        ("research_service", request_obj.app.state.research_service)
     ]
     for agent_name, agent_instance in agents_to_check:
         if agent_instance:

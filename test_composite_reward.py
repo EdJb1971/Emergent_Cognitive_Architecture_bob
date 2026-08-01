@@ -25,7 +25,7 @@ async def test_composite_reward():
         creative_agent=None,
         critic_agent=None,
         discovery_agent=None,
-        web_browsing_service=None,
+        research_service=None,
         cognitive_brain=None,
         memory_service=None,
         background_task_queue=None,

@@ -49,10 +49,11 @@ All four recurring error classes are now at zero across a two-turn conversation.
 - `CompositeProvider.is_local` accounts for the safety provider, so cloud moderation cannot hide in an otherwise-local setup.
 - Embedding identity is enforced by provider and model, never dimension, because Gemini `embedding-001` and `embeddinggemma` are both 768-dimensional.
 - Tooling: `src.tools.list_models`, `src.tools.reembed`, `src.tools.eval_retrieval`.
-- A hand-reviewed 12-query retrieval fixture now covers all 12 current `cognitive_cycles` records. The first local smoke baseline is recall@5 `0.958`, MRR `0.958`, and NDCG@5 `0.952`. Ten queries were perfect; `sister_name` had recall `0.750` at rank 1 and `brother_name` had recall `0.750` with its first relevant result at rank 2. This is too small and repetitive to satisfy the Phase 7 quality corpus.
+- The canonical retrieval fixture now contains 25 synthetic records and 50 reviewed queries with category, temporal, and expected-fact labels. `--seeded` creates an ephemeral identity-stamped collection, batches record and query embeddings, and never reads or changes personal memory. Two local runs with `embeddinggemma:latest` measured recall, MRR, and NDCG of `1.000` at k=1 and k=5; the collection was absent from the persistent database afterward. The earlier 12-query personal-database result (`0.958`/`0.958`/`0.952` at k=5) remains a useful smoke result only.
 - Both primary collections already carry `ollama/embeddinggemma:latest@768d`. Migration dry-runs correctly refuse them because rebuilding into the same vector identity would be meaningless; no legacy Gemini primary collection is present for a like-for-like comparison.
+- The first research-governance slice is implemented. Discovery and the meta-cognitive SEARCH_FIRST path now use a deterministic local `EscalationPolicy` and `ResearchService`; LLM-suggested queries cannot self-authorize, normal/disabled/local-only paths never invoke a provider, and every decision has structured audit metadata. Context is hard-limited to `question_only`. No live research adapter is present or enabled.
 
-**Test baseline:** `100 passed, 3 skipped` on August 2, 2026. The skips are three root-level async tests that are not handled by an async test plugin.
+**Test baseline:** `116 passed, 3 skipped` on August 2, 2026. The skips are three root-level async tests that are not handled by an async test plugin.
 
 **Latency is now measured, not guessed.** `StageTimer` wraps every orchestrator stage and emits a `CYCLE_TIMING` line plus `metadata["stage_timings_ms"]`; `OLLAMA_CALL` and `OLLAMA_EMBED` lines give per-request server, queue, prompt-eval, and eval time. Three cycles on August 1, 2026 overturned the previous assumption:
 
@@ -69,9 +70,11 @@ All four recurring error classes are now at zero across a two-turn conversation.
 2. Per-turn summary generation and STM-flush summarisation are queued off the response path when `BackgroundTaskQueue` is wired, with a per-user lock around summary writes.
 3. The synchronous fallback remains for isolated/test construction. The production queue is in-process and non-durable; shutdown cancels unfinished jobs.
 
-The implementation was exercised in a live run, but a comparable post-change `CYCLE_TIMING` sample was not preserved. End-to-end improvement therefore remains to be measured before adjusting `max_interactive`.
+Two matched post-change cycles are now preserved. Meta-cognition measured `0.53-0.54s` versus the prior `20-25s` slow path; `memory_upsert` measured `3.92-4.24s` versus `16-22s`, while its deferred summaries completed `4.09-5.05s` after the response path. Total cycles were `65.74s` and `49.12s`; Stage 1 and Stage 2 generation still consumed `85-89%`, so agent output volume remains the next latency lever. Do not raise `max_interactive` without a separate VRAM/contention measurement.
 
-**Current evidence slice:** The local retrieval smoke fixture and baseline above are complete. Next, preserve post-latency timing evidence and grow the fixture to at least 50 diverse queries as new non-duplicate records become available. A Gemini comparison must not be manufactured by uploading the current private corpus while the cloud-context privacy boundary remains undecided.
+**Memory defect found and repaired during the live measurement:** The collections use Chroma's default squared-L2 metric, but application code converted distances below `1.0` as if they were cosine distance and distances above `1.0` with a different reciprocal formula. A closer result at `0.865` therefore scored `0.135`, while a worse result at `1.088` scored `0.479`. The first matched run gave Cognitive Brain zero memories and an incorrect clarification. Metric-aware monotonic conversion now aligns normalized L2 scores with STM cosine similarity; the second run supplied three LTM memories and correctly recalled both Tom and Leeds.
+
+**Current evidence slice:** Complete. The research boundary is fail-closed and tested: an LLM suggestion alone cannot trigger research, explicit requests remain blocked when disabled, and local-only mode overrides an enabled/available test provider. An enabled test provider produces bounded, de-duplicated, question-only structured packets.
 
 ## Direction
 
@@ -79,7 +82,7 @@ Run the normal cognitive cycle locally through Ollama, using a capable local mul
 
 This is a good fit for ECA. It makes the persistent memory and cognitive orchestration inexpensive to run, keeps routine conversations private, and makes every cloud call intentional and inspectable.
 
-The implementation supports the local routine path today: roles are independently selectable, Ollama JSON mode is requested for structured calls, and shared JSON extraction/repair is used by the agents and Cognitive Brain. The target split is still incomplete because cloud research escalation, its privacy policy, multimodal capability routing, and hybrid observability have not been implemented.
+The implementation supports the local routine path today: roles are independently selectable, Ollama JSON mode is requested for structured calls, and shared JSON extraction/repair is used by the agents and Cognitive Brain. Research authorization and a question-only privacy boundary are now implemented, but the target split is still incomplete because no live grounded research adapter, research-packet synthesis path, multimodal capability routing, or hybrid observability exists.
 
 ## Target Architecture
 
@@ -166,7 +169,7 @@ Cloud research is a capability, not the default model. The local final synthesiz
 4. Implemented: health checks for Ollama availability and installed model presence.
 5. Implemented for normal requests: provider failures surface rather than silently falling back to cloud. A separate explicit research-escalation policy remains Phase 5 work.
 6. Partially implemented: `ModelExecutionScheduler` bounds interactive and background concurrency and exposes active counts. Per-cycle call/token budgets, cancellation, compact-cycle degradation, residency management, and richer queue/VRAM telemetry remain planned.
-7. In progress: full-cycle timing identifies the dominant stages and the first output/critical-path reduction slice is implemented. Comparable post-change timings and any concurrency change are still pending.
+7. Measured: two post-change full cycles verify the first output/critical-path reduction. Agent generation owns `85-89%` of current latency. Concurrency remains unchanged pending a separate VRAM/contention experiment.
 
 **Exit criteria:** A text-only `/chat` cycle completes locally with no Gemini API calls; local inference remains bounded under concurrent work; and the selected provider/model plus scheduling decision are visible in cycle metadata and logs.
 
@@ -203,18 +206,21 @@ Cloud research is a capability, not the default model. The local final synthesiz
 
 **Goal:** Make Discovery the only cloud-capable node by policy.
 
-1. Replace `WebBrowsingService` with a `ResearchService` that has pluggable strategies:
+**Current status:** The provider-neutral safety boundary is implemented and disabled by default. Legacy `WebBrowsingService` is no longer instantiated or reachable. Deterministic reflex signals, fail-closed dispositions, question-only context, structured packets, audit logs, and Discovery/meta-cognitive integration are tested. The intended brain-inspired research drive, offline inquiry queue, real grounded provider, and packet-to-synthesis path remain unimplemented.
+
+1. Boundary complete; provider pending: replace `WebBrowsingService` with a `ResearchService` protocol and disabled provider. Next add:
    - `CloudResearchProvider` for a cloud LLM with grounded search/retrieval capability.
    - Optional future direct-search adapter when source-level control is needed.
-2. Add an `EscalationPolicy` used by `DiscoveryAgent` and `MetaCognitiveMonitor`. Initial reasons:
+2. First-line gate complete; cognitive controller pending: the deterministic `EscalationPolicy` supplies interpretable signals to Discovery and the meta-cognitive SEARCH_FIRST path:
    - current or time-sensitive information
    - explicit user request to research/search the web
    - local confidence below a configured threshold
    - named fact that is absent from local memory
-3. Require a local policy decision before cloud contact and record: request ID, reason, provider, model, timestamp, token/context size, source list, and cost estimate if available.
-4. Minimize cloud context. Send the question and a compact, redacted local summary, not full transcripts or raw memory by default.
-5. Return a structured research packet with claims, sources, publication/access dates, confidence, and caveats. Have the local Cognitive Brain synthesize the user-facing answer.
-6. Make the cloud provider configurable, for example `RESEARCH_PROVIDER=gemini`, `RESEARCH_MODEL=<verified-model-name>`, so Gemini Flash can be used now without making it a permanent architectural dependency.
+   Build a bounded evidence accumulator above these gates using calibrated uncertainty, inter-agent/memory conflict, novelty or prediction error, temporal volatility, task stakes, persistence after local attempts, expected information gain, cloud cost/privacy, and refractory cooldown. It must support the action ladder: deeper local thought -> clarification/uncertainty -> approval if required -> cloud research.
+3. Boundary complete: require a local policy decision before provider contact and record decision/request IDs, reasons, disposition, provider, model, timestamp, estimated query size, context size/policy, provider latency, source/claim counts, and cost when supplied. Persistent metrics still belong to Phase 6.
+4. First privacy boundary complete: only the question is permitted; no transcript, summary, agent output, or raw memory crosses the provider contract. A future compact/redacted-summary mode requires its own release policy and tests.
+5. Contract complete; synthesis pending: structured packets contain claims, source IDs, URLs, publication/access dates, confidence, caveats, status, context size, and optional cost. Cognitive Brain does not consume them yet.
+6. Configuration boundary complete; adapter pending: `RESEARCH_ENABLED`, provider/model, confidence threshold, and query bounds are explicit. Only `RESEARCH_PROVIDER=disabled` is accepted until a real adapter is implemented and verified.
 
 **Exit criteria:** A normal local chat does not call the cloud; a research-required query produces an auditable cloud research packet and a locally synthesized response with sources.
 
@@ -234,11 +240,11 @@ Cloud research is a capability, not the default model. The local final synthesiz
 
 **Goal:** Make the existing STM, summary, LTM, and consolidation design reliable with local models and measurable retrieval quality.
 
-**Current status:** Implemented in parts, with an initial local retrieval smoke baseline but no end-to-end reliability validation. STM, background summary updates, ChromaDB storage, and the consolidation service exist. Periodic consolidation scheduling, cleanup policy, recovery verification, and a diverse evaluation corpus remain incomplete.
+**Current status:** Implemented in parts, with a reproducible direct-ranking baseline but no end-to-end reliability validation. STM, background summary updates, ChromaDB storage, and the consolidation service exist. The diverse synthetic corpus is complete; application-level expected-fact evaluation, periodic consolidation scheduling, cleanup policy, and recovery verification remain incomplete.
 
 1. Make all memory budgets model-neutral. Derive STM/context reserves from active provider capabilities instead of Gemini-specific limits.
-2. In progress: the versioned fixture contains 12 reviewed paraphrased queries over all 12 current cycle records. Grow it to at least 50 diverse queries with time-sensitive cases and expected summary facts; repeated smoke-test conversations are not sufficient evidence.
-3. Initial local measurement complete: recall@5 `0.958`, MRR `0.958`, and NDCG@5 `0.952`; the evaluator now identifies partial-recall/ranking queries instead of reporting only total misses. The collections were created directly with local embeddings, so there was no pre-switch Gemini collection. Define an acceptable delta and a privacy-safe comparison corpus before any cross-provider comparison.
+2. Complete for direct vector ranking: the version 2 fixture seeds 25 synthetic records and evaluates 50 reviewed queries in an ephemeral collection. It includes time-sensitive cases and expected-fact labels without depending on mutable personal memory.
+3. Local measurement complete: the canonical seeded corpus measured recall, MRR, and NDCG of `1.000` at k=1 and k=5 with `embeddinggemma:latest`; the earlier personal-database smoke run measured `0.958`, `0.958`, and `0.952` at k=5. The evaluator reports partial recall and ranking failures. Define an acceptable delta before any cross-provider comparison; the synthetic corpus is safe to compare, but no retained Gemini collection exists.
 4. Preserve provenance: summaries and semantic memories must retain source cycle IDs, generation provider/model, timestamps, and embedding version.
 5. Add per-user locking and fault-injection tests for summary-before-flush, failed upserts, and interrupted recovery.
 6. Add a deliberate STM cleanup and snapshot policy: retention bounds, recovery age limits, periodic snapshots, and no silent data deletion.
@@ -247,6 +253,7 @@ Cloud research is a capability, not the default model. The local final synthesiz
 9. Repair and test the consolidation service contract before scheduling it: implement or replace its missing `MemoryService.get_user_cycles()` dependency and pass both `user_id` and `cycle_id` to `get_cycle_by_id()`.
 10. Verify the episodic-to-semantic extraction path has a persistent destination and a retrieval path before presenting semantic memories as available to CognitiveBrain.
 11. Test summary identity extraction on diverse inputs and treat regex matching as a fallback heuristic, not a durable identity system.
+12. Add a persistent offline `InquiryCandidate` queue for dream/consolidation output. Candidates retain question, hypothesis, source-cycle provenance, uncertainty, novelty/prediction error, salience, expected information gain, status, and expiry. Consolidation may propose candidates but never execute research; waking cognition must revalidate and authorize them.
 
 **Exit criteria:** Local memory retrieval has a documented quality baseline; summary/flush/recovery paths are covered by integration tests; consolidation runs only when explicitly enabled and leaves an audit record.
 
@@ -355,18 +362,19 @@ META_COGNITIVE_MAX_RESPONSE_WORDS=40
 EMBEDDING_IDENTITY_ENFORCED=true
 ```
 
-Proposed, not yet implemented. Add with Phase 5 and Phase 6:
+Implemented fail-closed Phase 5 boundary:
 
 ```dotenv
 # Explicit research escalation
-RESEARCH_ENABLED=true
-RESEARCH_PROVIDER=gemini
-RESEARCH_MODEL=<verified-cloud-model>
-RESEARCH_ALLOW_LOCAL_CONTEXT=false
-
-# Cloud context boundary
-MAX_CLOUD_CONTEXT_CHARS=12000
+RESEARCH_ENABLED=false
+RESEARCH_PROVIDER=disabled
+RESEARCH_MODEL=
+RESEARCH_LOW_CONFIDENCE_THRESHOLD=0.55
+RESEARCH_MAX_QUERIES=3
+RESEARCH_MAX_QUERY_CHARS=500
 ```
+
+The current provider contract always sends `question_only`. A compact/redacted context mode and its maximum size are not configurable until a context-release policy is implemented.
 
 ## Open Decisions
 
@@ -375,23 +383,27 @@ Resolved:
 1. Ollama `0.32.5`, `gemma4:e4b` for generation, `embeddinggemma:latest` (768d) for embeddings.
 2. `gemma4:e4b` is text-only in the installed Ollama release; its embedding endpoint returns `501`.
 3. The embedding model is selected separately from the chat model, per role.
+4. The initial cloud-context boundary is `question_only`: no transcript, summary, agent output, or memory enters a research request.
 
 Still open:
 
-4. Whether cloud research is allowed automatically by policy or only after user confirmation.
-5. The privacy boundary for cloud escalation: no local context, compact summary only, or user-approved selected memories.
-6. The current Google model identifier, confirmed from the provider console/API rather than a marketing label.
-7. The acceptable retrieval-quality delta and privacy-safe source corpus for any future Gemini-versus-local comparison. No legacy Gemini primary collection exists today.
+5. Whether cloud research is allowed automatically by policy or only after user confirmation.
+6. Whether to add an opt-in compact/redacted-summary context mode later; the default remains question-only.
+7. The current Google model identifier, confirmed from the provider console/API rather than a marketing label.
+8. The acceptable retrieval-quality delta and privacy-safe source corpus for any future Gemini-versus-local comparison. No legacy Gemini primary collection exists today.
 
 ## Current Execution Order
 
 1. Complete: Phase 0 test repair and runtime baseline.
 2. Complete for the current text path: Phase 1 provider boundary, shared structured-output repair, and Phase 2 local adapter/routing.
 3. Complete: cycle latency instrumentation. Per-stage and per-request timing identifies local token generation as the bottleneck.
-4. Complete in code: cap meta-cognitive output and move summary/STM-flush summarisation off the response path. Post-change end-to-end timing evidence is still required.
+4. Complete and measured: cap meta-cognitive output and move summary/STM-flush summarisation off the response path. The formerly dominant stages now take about `0.53s` and `4.1s`; agent generation owns `85-89%` of the response path.
 5. Complete as a smoke slice: verify both primary collections are already in the active local vector space, author a 12-query reviewed fixture, and record the first local retrieval baseline.
-6. **Active evidence work:** preserve comparable post-latency `CYCLE_TIMING` samples and expand retrieval evaluation toward the 50-query Phase 7 corpus. Do not create a cloud comparison from private memory until the privacy boundary is decided.
-7. Then Phase 5 and Phase 6: controlled cloud research escalation, explicit research enablement, and hybrid observability. `LOCAL_ONLY_MODE` enforcement itself is already implemented.
-8. Then Phase 8 through Phase 10: validate learning, attention, salience, and autonomous task mechanisms before adding predictive cognition.
+6. Complete: repair the application-level L2 distance conversion exposed by the matched live query; verify three LTM hits and correct Tom/Leeds recall.
+7. Complete: replace the mutable personal-database fixture with a reproducible, synthetic, identity-stamped ephemeral collection; measure 50 reviewed queries without persistent database pollution.
+8. Complete: introduce the disabled-by-default `ResearchService`, local `EscalationPolicy`, structured contracts, Discovery/meta-cognitive integration, and negative provider-invocation tests.
+9. **Next:** implement the brain-inspired `CognitiveResearchDrive` and persistent offline `InquiryCandidate` queue. Validate multi-signal accumulation, local-first effort allocation, hysteresis/cooldowns, dream-to-waking handoff, and the invariant that consolidation cannot invoke a provider.
+10. Then implement one grounded `CloudResearchProvider` behind that controller, plus explicit context release, packet validation, timeout/failure behavior, and Cognitive Brain packet consumption. Keep it disabled by default until its model identifier and source behavior are verified.
+11. Then Phase 6 observability, followed by Phase 8 through Phase 10 validation of learning, attention, salience, and autonomous task mechanisms before predictive cognition.
 
-The immediate next measurement is a matched live cycle after the latency changes. The next development slice after that is the cloud-research escalation boundary, unless memory reliability findings from the growing fixture expose a defect that should be fixed first.
+The next slice is the cognitive trigger layer, before any real cloud adapter: build a bounded research-drive accumulator and an offline inquiry queue shared by waking metacognition and sleep-like consolidation. Dream output may propose research, but only waking governance may approve it. A live provider follows only after those invariants are measured and tested.

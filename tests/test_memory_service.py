@@ -22,6 +22,20 @@ def memory_service(mock_llm_service):
     return service
 
 
+def test_l2_distance_scoring_is_monotonic_and_matches_normalized_cosine(memory_service):
+    closer = memory_service._distance_to_score(0.865262, "l2")
+    farther = memory_service._distance_to_score(1.087546, "l2")
+
+    assert closer == pytest.approx(0.567369)
+    assert farther == pytest.approx(0.456227)
+    assert closer > farther
+
+
+def test_cosine_distance_scoring_uses_one_minus_distance(memory_service):
+    assert memory_service._distance_to_score(0.2, "cosine") == pytest.approx(0.8)
+    assert memory_service._distance_to_score(1.2, "cosine") == 0.0
+
+
 @pytest.mark.asyncio
 async def test_upsert_cycle_stores_cycle_in_stm_ltm_and_summary(memory_service, mock_llm_service):
     cycle = CognitiveCycle(
@@ -97,6 +111,34 @@ async def test_query_memory_merges_ranked_stm_and_ltm_results(memory_service, mo
 
     assert [cycle.cycle_id for cycle in results] == [stm_cycle.cycle_id, ltm_cycle.cycle_id]
     memory_service.cycles_collection.query.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_query_memory_accepts_relevant_default_l2_result(memory_service):
+    user_id = uuid4()
+    ltm_cycle = CognitiveCycle(
+        user_id=user_id,
+        session_id=uuid4(),
+        user_input="My brother Tom is moving to Leeds",
+    )
+    memory_service.cycles_collection.metadata = {
+        "embedding_provider": "ollama",
+        "embedding_model": "embeddinggemma:latest",
+    }
+    memory_service.cycles_collection.query.return_value = {
+        "metadatas": [[{"json_data": ltm_cycle.model_dump_json()}]],
+        "distances": [[0.865262]],
+    }
+
+    results = await memory_service.query_memory(
+        MemoryQueryRequest(
+            user_id=user_id,
+            query_text="What was my brother's name and where is he going?",
+        )
+    )
+
+    assert [cycle.cycle_id for cycle in results] == [ltm_cycle.cycle_id]
+    assert results[0].score == pytest.approx(0.567369)
 
 
 @pytest.mark.asyncio

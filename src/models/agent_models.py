@@ -2,6 +2,8 @@ from pydantic import BaseModel, Field
 from typing import List, Dict, Any, Optional, Set
 from datetime import datetime
 
+from src.models.research_models import ResearchOutcome
+
 class PerceptionAnalysis(BaseModel):
     topics: List[str] = Field(..., description="Main topics identified in the user input.")
     patterns: List[str] = Field(..., description="Recurring patterns or themes detected.")
@@ -48,7 +50,8 @@ class DiscoveryAnalysis(BaseModel):
     curiosities_generated: List[str] = Field(..., description="Questions or areas of interest for further exploration.")
     proposed_explorations: List[str] = Field(..., description="Suggestions for how to explore the identified gaps or curiosities.")
     discovery_priority: int = Field(..., ge=1, description="Priority level for pursuing the identified discoveries.")
-    web_search_results: Optional[List[Dict[str, Any]]] = Field(None, description="Summarized results from autonomous web searches, if performed.")
+    research: Optional[ResearchOutcome] = Field(None, description="Policy decision and structured research packets, if research was considered.")
+    web_search_results: Optional[List[Dict[str, Any]]] = Field(default_factory=list, description="Deprecated compatibility field; autonomous legacy browsing is disabled.")
 
 
 # ============================================================================

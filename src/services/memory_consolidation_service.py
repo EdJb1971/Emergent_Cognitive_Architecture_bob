@@ -13,9 +13,9 @@ This mimics how the brain consolidates memories during sleep/rest.
 
 import logging
 import asyncio
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 from datetime import datetime, timedelta
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from src.models.agent_models import MemoryConsolidationJob, EpisodicMemory, SemanticMemory
 from src.models.core_models import CognitiveCycle
@@ -25,6 +25,10 @@ from src.services.llm_integration_service import LLMIntegrationService
 from src.models.research_models import CognitiveResearchSignals, InquirySourceType
 from src.services.inquiry_candidate_service import InquiryCandidateService
 from src.services.salience_network import SalienceNetwork
+from src.services.sleep_cycle_ledger import SleepCycleLedger
+from src.models.sleep_models import SleepLedgerEventType
+from src.providers.base import ProviderPurpose, ProviderRequest
+from src.agents.utils import extract_json_from_response
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +47,8 @@ class MemoryConsolidationService:
         proactive_engine: Optional[Any] = None,
         inquiry_candidate_service: Optional[InquiryCandidateService] = None,
         salience_network: Optional[SalienceNetwork] = None,
+        audit_ledger: Optional[SleepCycleLedger] = None,
+        consolidation_interval_minutes: float = 30.0,
     ):
         self.memory_service = memory_service
         self.autobiographical_system = autobiographical_system
@@ -50,8 +56,9 @@ class MemoryConsolidationService:
         self.proactive_engine = proactive_engine  # Optional ProactiveEngagementEngine
         self.inquiry_candidate_service = inquiry_candidate_service
         self.salience_network = salience_network
+        self.audit_ledger = audit_ledger
         self.consolidation_jobs: Dict[str, MemoryConsolidationJob] = {}
-        self.consolidation_interval_minutes = 30  # Run every 30 minutes
+        self.consolidation_interval_minutes = max(0.0, consolidation_interval_minutes)
         self.last_consolidation: Dict[str, datetime] = {}  # user_id -> last consolidation time
         logger.info("MemoryConsolidationService initialized.")
     
@@ -71,13 +78,19 @@ class MemoryConsolidationService:
         
         time_since_last = datetime.utcnow() - last_time
         return time_since_last.total_seconds() / 60 >= self.consolidation_interval_minutes
+
+    def record_consolidation_completed(self, user_id: str) -> None:
+        """Start the cooldown only after the owning sleep pipeline fully succeeds."""
+        self.last_consolidation[user_id] = datetime.utcnow()
     
     async def create_consolidation_job(
         self,
         user_id: str,
         consolidation_type: str = "episodic_to_semantic",
         cycle_ids: Optional[List[str]] = None,
-        priority: float = 0.5
+        priority: float = 0.5,
+        run_id: Optional[UUID] = None,
+        salience_advisory: Optional[Dict[str, Any]] = None,
     ) -> MemoryConsolidationJob:
         """
         Create a new consolidation job.
@@ -94,14 +107,17 @@ class MemoryConsolidationService:
         job_id = str(uuid4())
         
         # If no specific cycles, get recent high-priority cycles
-        salience_advisory = None
         if not cycle_ids:
             cycle_ids, salience_advisory = (
-                await self._get_consolidation_candidates_with_advisory(user_id)
+                await self.get_consolidation_candidates(
+                    user_id,
+                    consolidation_type=consolidation_type,
+                )
             )
         
         job = MemoryConsolidationJob(
             job_id=job_id,
+            run_id=str(run_id) if run_id else None,
             user_id=user_id,
             cycle_ids_to_process=cycle_ids,
             consolidation_type=consolidation_type,
@@ -110,6 +126,7 @@ class MemoryConsolidationService:
             salience_advisory=salience_advisory,
         )
         
+        await self._audit_job(SleepLedgerEventType.JOB_CREATED, job, run_id=run_id)
         self.consolidation_jobs[job_id] = job
         logger.info(f"Created consolidation job {job_id} for user {user_id}: {len(cycle_ids)} cycles")
         
@@ -120,21 +137,22 @@ class MemoryConsolidationService:
         Get cycle IDs that are candidates for consolidation.
         Prioritizes high consolidation_priority cycles from recent history.
         """
-        cycle_ids, _ = await self._get_consolidation_candidates_with_advisory(
+        cycle_ids, _ = await self.get_consolidation_candidates(
             user_id,
+            consolidation_type="episodic_to_semantic",
             limit=limit,
         )
         return cycle_ids
 
-    async def _get_consolidation_candidates_with_advisory(
+    async def get_consolidation_candidates(
         self,
         user_id: str,
+        consolidation_type: str = "episodic_to_semantic",
         limit: int = 20,
     ) -> tuple[List[str], Optional[Dict[str, Any]]]:
         """Return the unchanged baseline selection plus an optional replay ranking."""
         try:
             # Get recent cycles with high consolidation priority
-            from uuid import UUID
             cycles = await self.memory_service.get_user_cycles(
                 user_id=UUID(user_id),
                 limit=limit
@@ -145,8 +163,9 @@ class MemoryConsolidationService:
             for cycle in cycles:
                 consolidation_meta = cycle.metadata.get("consolidation_metadata", {})
                 priority = consolidation_meta.get("consolidation_priority", 0.0)
-                
-                if priority > 0.6:  # Only consolidate medium-high priority memories
+                completed_types = cycle.metadata.get("sleep_consolidation", {})
+
+                if priority > 0.6 and consolidation_type not in completed_types:
                     candidates.append(str(cycle.cycle_id))
             
             salience_advisory = None
@@ -164,9 +183,14 @@ class MemoryConsolidationService:
             
         except Exception as e:
             logger.error(f"Error getting consolidation candidates: {e}")
-            return [], None
+            raise
     
-    async def execute_consolidation_job(self, job_id: str) -> MemoryConsolidationJob:
+    async def execute_consolidation_job(
+        self,
+        job_id: str,
+        *,
+        run_id: Optional[UUID] = None,
+    ) -> MemoryConsolidationJob:
         """
         Execute a consolidation job in the background.
         
@@ -178,10 +202,15 @@ class MemoryConsolidationService:
         """
         job = self.consolidation_jobs.get(job_id)
         if not job:
-            logger.error(f"Consolidation job {job_id} not found")
-            return None
+            raise KeyError(f"Consolidation job {job_id} not found")
         
+        effective_run_id = run_id or (UUID(job.run_id) if job.run_id else None)
         job.status = "processing"
+        await self._audit_job(
+            SleepLedgerEventType.JOB_STARTED,
+            job,
+            run_id=effective_run_id,
+        )
         logger.info(f"Executing consolidation job {job_id}: {job.consolidation_type}")
         
         try:
@@ -192,11 +221,19 @@ class MemoryConsolidationService:
             elif job.consolidation_type == "pattern_extraction":
                 await self._extract_patterns(job)
             else:
-                logger.warning(f"Unknown consolidation type: {job.consolidation_type}")
+                raise ValueError(f"Unknown consolidation type: {job.consolidation_type}")
+
+            await self._mark_cycles_processed(job)
             
             job.status = "completed"
             job.completed_at = datetime.utcnow()
-            self.last_consolidation[job.user_id] = datetime.utcnow()
+            if effective_run_id is None:
+                self.record_consolidation_completed(job.user_id)
+            await self._audit_job(
+                SleepLedgerEventType.JOB_COMPLETED,
+                job,
+                run_id=effective_run_id,
+            )
             
             logger.info(
                 f"Completed consolidation job {job_id}: "
@@ -234,12 +271,65 @@ class MemoryConsolidationService:
                 except Exception as e:
                     logger.warning(f"Failed to generate proactive message from consolidation: {e}")
             
+        except asyncio.CancelledError:
+            job.status = "cancelled"
+            job.completed_at = datetime.utcnow()
+            await asyncio.shield(
+                self._audit_job(
+                    SleepLedgerEventType.JOB_CANCELLED,
+                    job,
+                    run_id=effective_run_id,
+                )
+            )
+            raise
         except Exception as e:
             job.status = "failed"
             job.error_message = str(e)
+            job.completed_at = datetime.utcnow()
+            await self._audit_job(
+                SleepLedgerEventType.JOB_FAILED,
+                job,
+                run_id=effective_run_id,
+            )
             logger.error(f"Consolidation job {job_id} failed: {e}", exc_info=True)
         
         return job
+
+    async def _audit_job(
+        self,
+        event_type: SleepLedgerEventType,
+        job: MemoryConsolidationJob,
+        *,
+        run_id: Optional[UUID],
+    ) -> None:
+        if not self.audit_ledger:
+            return
+        await self.audit_ledger.append(
+            event_type,
+            user_id=UUID(job.user_id),
+            run_id=run_id,
+            job_id=UUID(job.job_id),
+            payload={"job": job.model_dump(mode="json")},
+        )
+
+    async def _mark_cycles_processed(self, job: MemoryConsolidationJob) -> None:
+        completed_at = datetime.utcnow().isoformat()
+        for cycle_id in job.cycle_ids_to_process:
+            updated = await self.memory_service.patch_cycle_metadata(
+                UUID(job.user_id),
+                UUID(cycle_id),
+                {
+                    "sleep_consolidation": {
+                        job.consolidation_type: {
+                            "completed_at": completed_at,
+                            "job_id": job.job_id,
+                            "run_id": job.run_id,
+                        }
+                    }
+                },
+            )
+            if updated is None:
+                raise KeyError(f"Cycle {cycle_id} disappeared during consolidation")
 
     async def _queue_dream_inquiries(self, job: MemoryConsolidationJob) -> None:
         """Persist unresolved offline discoveries; this path has no research-provider access."""
@@ -281,29 +371,28 @@ class MemoryConsolidationService:
         Convert episodic memories into semantic knowledge.
         Example: Multiple episodes of user saying "I like coffee" -> semantic fact "user prefers coffee"
         """
-        from uuid import UUID
-        
         # Get the cycles to consolidate
         cycles = []
         for cycle_id in job.cycle_ids_to_process:
-            try:
-                cycle = await self.memory_service.get_cycle_by_id(UUID(cycle_id))
-                if cycle:
-                    cycles.append(cycle)
-            except Exception as e:
-                logger.warning(f"Could not retrieve cycle {cycle_id}: {e}")
+            cycle = await self.memory_service.get_cycle_by_id(
+                UUID(job.user_id),
+                UUID(cycle_id),
+            )
+            if cycle is None:
+                raise KeyError(f"Cycle {cycle_id} not found for episodic consolidation")
+            cycles.append(cycle)
         
         if not cycles:
-            logger.warning(f"No cycles to consolidate for job {job.job_id}")
-            return
+            raise ValueError(f"Job {job.job_id} has no cycles to consolidate")
         
         # Create episodic memories from high-significance cycles
+        episode_ids_by_cycle: Dict[str, str] = {}
         for cycle in cycles:
             consolidation_priority = cycle.metadata.get("consolidation_metadata", {}).get("consolidation_priority", 0.5)
             
             if consolidation_priority > 0.7:  # High significance
                 # Generate rich narrative using LLM
-                narrative = await self._generate_episode_narrative(cycle)
+                narrative, provider, model = await self._generate_episode_narrative(cycle)
                 
                 # Extract emotional tone
                 contextual_bindings = cycle.metadata.get("contextual_bindings", {})
@@ -318,17 +407,27 @@ class MemoryConsolidationService:
                     narrative=narrative,
                     significance=consolidation_priority,
                     emotional_tone=emotional_valence,
-                    key_insights=key_insights
+                    key_insights=key_insights,
+                    consolidation_job_id=job.job_id,
+                    generation_provider=provider,
+                    generation_model=model,
                 )
-                
+                episode_ids_by_cycle[str(cycle.cycle_id)] = episode.episode_id
                 job.episodes_created += 1
         
         # Extract semantic concepts from the episodes
         # Group cycles by topic and extract learned facts
-        semantic_concepts = await self._extract_semantic_concepts_from_cycles(cycles, job.user_id)
+        semantic_concepts = await self._extract_semantic_concepts_from_cycles(
+            cycles,
+            job,
+            episode_ids_by_cycle,
+        )
         job.semantic_concepts_extracted = len(semantic_concepts)
     
-    async def _generate_episode_narrative(self, cycle: CognitiveCycle) -> str:
+    async def _generate_episode_narrative(
+        self,
+        cycle: CognitiveCycle,
+    ) -> Tuple[str, Optional[str], Optional[str]]:
         """Generate a rich narrative description of the episode using LLM."""
         try:
             prompt = f"""
@@ -344,17 +443,17 @@ Context: {cycle.metadata.get('contextual_bindings', {}).get('topics', [])}
 Provide a 2-3 sentence narrative in past tense, as if remembering this moment.
 """
             
-            narrative = await self.llm_service.generate_text(
+            narrative, provider, model = await self._generate_background_text(
                 prompt=prompt,
-                max_tokens=150,
+                max_output_tokens=150,
                 temperature=0.7
             )
             
-            return narrative.strip()
+            return narrative.strip(), provider, model
             
         except Exception as e:
             logger.warning(f"Could not generate narrative, using default: {e}")
-            return f"User asked: {cycle.user_input[:100]}..."
+            return f"User asked: {cycle.user_input[:100]}...", None, None
     
     async def _extract_insights_from_cycle(self, cycle: CognitiveCycle) -> List[str]:
         """Extract key insights or learnings from the cycle."""
@@ -378,7 +477,8 @@ Provide a 2-3 sentence narrative in past tense, as if remembering this moment.
     async def _extract_semantic_concepts_from_cycles(
         self,
         cycles: List[CognitiveCycle],
-        user_id: str
+        job: MemoryConsolidationJob,
+        episode_ids_by_cycle: Dict[str, str],
     ) -> List[SemanticMemory]:
         """
         Extract semantic concepts (facts, preferences, patterns) from multiple cycles.
@@ -401,7 +501,10 @@ Provide a 2-3 sentence narrative in past tense, as if remembering this moment.
             if len(topic_cycles) >= 2:  # Need multiple instances to form a pattern
                 # Analyze for user preferences or facts
                 concept = await self._analyze_topic_for_semantic_knowledge(
-                    topic, topic_cycles, user_id
+                    topic,
+                    topic_cycles,
+                    job,
+                    episode_ids_by_cycle,
                 )
                 if concept:
                     concepts.append(concept)
@@ -412,7 +515,8 @@ Provide a 2-3 sentence narrative in past tense, as if remembering this moment.
         self,
         topic: str,
         cycles: List[CognitiveCycle],
-        user_id: str
+        job: MemoryConsolidationJob,
+        episode_ids_by_cycle: Dict[str, str],
     ) -> Optional[SemanticMemory]:
         """Analyze multiple cycles about a topic to extract semantic knowledge."""
         try:
@@ -435,23 +539,32 @@ Provide:
 Format as JSON: {{"concept_name": "...", "description": "...", "category": "..."}}
 """
             
-            response = await self.llm_service.generate_text(
+            response, provider, model = await self._generate_background_text(
                 prompt=prompt,
-                max_tokens=150,
-                temperature=0.3
+                max_output_tokens=150,
+                temperature=0.3,
+                response_json=True,
             )
             
-            # Parse JSON response
-            import json
-            data = json.loads(response.strip())
+            data = extract_json_from_response(response)
+            source_cycle_ids = [str(c.cycle_id) for c in cycles]
+            source_episode_ids = [
+                episode_ids_by_cycle[cycle_id]
+                for cycle_id in source_cycle_ids
+                if cycle_id in episode_ids_by_cycle
+            ]
             
             concept = await self.autobiographical_system.extract_semantic_memory(
-                user_id=user_id,
+                user_id=job.user_id,
                 concept_name=data["concept_name"],
                 description=data["description"],
                 category=data["category"],
-                source_episodes=[str(c.cycle_id) for c in cycles],
-                confidence=0.7
+                source_episodes=source_episode_ids,
+                source_cycle_ids=source_cycle_ids,
+                consolidation_job_id=job.job_id,
+                generation_provider=provider,
+                generation_model=model,
+                confidence=0.7,
             )
             
             return concept
@@ -467,12 +580,25 @@ Format as JSON: {{"concept_name": "...", "description": "...", "category": "..."
         """
         logger.info(f"Replaying {len(job.cycle_ids_to_process)} memories for strengthening")
         
-        # In a full implementation, this would:
-        # 1. Retrieve the memories
-        # 2. Update their "replay_count" metadata
-        # 3. Potentially re-embed them with higher importance weights
-        
-        # For now, just log and update job
+        for cycle_id in job.cycle_ids_to_process:
+            cycle = await self.memory_service.get_cycle_by_id(
+                UUID(job.user_id),
+                UUID(cycle_id),
+            )
+            if cycle is None:
+                raise KeyError(f"Cycle {cycle_id} not found for replay")
+            consolidation = cycle.metadata.get("consolidation_metadata", {})
+            replay_count = int(consolidation.get("replay_count", 0)) + 1
+            await self.memory_service.patch_cycle_metadata(
+                UUID(job.user_id),
+                UUID(cycle_id),
+                {
+                    "consolidation_metadata": {
+                        "replay_count": replay_count,
+                        "last_accessed": datetime.utcnow().isoformat(),
+                    }
+                },
+            )
         job.patterns_discovered.append(f"Replayed {len(job.cycle_ids_to_process)} memories")
     
     async def _extract_patterns(self, job: MemoryConsolidationJob):
@@ -480,16 +606,15 @@ Format as JSON: {{"concept_name": "...", "description": "...", "category": "..."
         Extract patterns across multiple memories.
         Example: User often asks questions in the evening, user prefers detailed explanations, etc.
         """
-        from uuid import UUID
-        
         cycles = []
         for cycle_id in job.cycle_ids_to_process[:10]:  # Analyze up to 10 cycles
-            try:
-                cycle = await self.memory_service.get_cycle_by_id(UUID(cycle_id))
-                if cycle:
-                    cycles.append(cycle)
-            except Exception as e:
-                logger.warning(f"Could not retrieve cycle {cycle_id}: {e}")
+            cycle = await self.memory_service.get_cycle_by_id(
+                UUID(job.user_id),
+                UUID(cycle_id),
+            )
+            if cycle is None:
+                raise KeyError(f"Cycle {cycle_id} not found for pattern extraction")
+            cycles.append(cycle)
         
         if len(cycles) < 3:
             logger.warning("Not enough cycles to extract patterns")
@@ -516,14 +641,14 @@ Provide patterns as a JSON array: ["pattern1", "pattern2", ...]
 Examples: "tends to ask complex questions in the evening", "prefers deep conversations over small talk"
 """
             
-            response = await self.llm_service.generate_text(
+            response, _provider, _model = await self._generate_background_text(
                 prompt=prompt,
-                max_tokens=200,
-                temperature=0.5
+                max_output_tokens=200,
+                temperature=0.5,
+                response_json=True,
             )
-            
-            import json
-            patterns = json.loads(response.strip())
+
+            patterns = extract_json_from_response(response)
             
             if isinstance(patterns, list):
                 job.patterns_discovered.extend(patterns)
@@ -531,25 +656,43 @@ Examples: "tends to ask complex questions in the evening", "prefers deep convers
             
         except Exception as e:
             logger.warning(f"Could not extract patterns: {e}")
-    
-    async def run_background_consolidation_loop(self):
-        """
-        Background loop that periodically checks for consolidation opportunities.
-        This would run as a background task in main.py.
-        """
-        logger.info("Starting background consolidation loop")
-        
-        while True:
-            try:
-                # Check all active users (in a real system, track active users)
-                # For now, just wait for explicit triggers
-                await asyncio.sleep(60 * self.consolidation_interval_minutes)
-                
-                logger.debug("Background consolidation check (no active users to process)")
-                
-            except asyncio.CancelledError:
-                logger.info("Background consolidation loop cancelled")
-                break
-            except Exception as e:
-                logger.error(f"Error in consolidation loop: {e}", exc_info=True)
-                await asyncio.sleep(60)  # Wait a minute before retrying
+
+    async def _generate_background_text(
+        self,
+        *,
+        prompt: str,
+        max_output_tokens: int,
+        temperature: float,
+        response_json: bool = False,
+    ) -> Tuple[str, Optional[str], Optional[str]]:
+        """Use the local provider's background semaphore when that seam is available."""
+        generation_provider = getattr(
+            self.llm_service,
+            "generation_provider",
+            self.llm_service,
+        )
+        generate = getattr(type(generation_provider), "generate", None)
+        if callable(generate):
+            result = await generation_provider.generate(
+                ProviderRequest(
+                    purpose=ProviderPurpose.BACKGROUND,
+                    prompt=prompt,
+                    max_output_tokens=max_output_tokens,
+                    temperature=temperature,
+                    response_json=response_json,
+                )
+            )
+            return result.content, result.provider, result.model
+
+        response = await generation_provider.generate_text(
+            prompt=prompt,
+            max_output_tokens=max_output_tokens,
+            temperature=temperature,
+            response_json=response_json,
+        )
+        capabilities = getattr(generation_provider, "capabilities", None)
+        return (
+            response,
+            getattr(capabilities, "provider", None),
+            getattr(capabilities, "model", None),
+        )

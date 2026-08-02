@@ -16,8 +16,9 @@ This document describes the Emergent Cognitive Architecture (ECA), a brain-inspi
 | Cognitive cycle | Implemented | `main.py` wires FastAPI to `OrchestrationService`; the orchestrator runs selective Stage 1 and Stage 2 agents, conflict checks, final synthesis, and ChromaDB-backed memory storage. |
 | Memory, self-model, ToM, RL, procedural learning | Implemented with graceful-degradation paths | Services are instantiated and invoked from the cycle. Failures in optional enrichment paths are logged and the cycle continues. |
 | Attention controller | Implemented, default inactive | It uses lightweight heuristics. It emits directives before Stage 1 and after Stage 1; routing changes only when `ATTENTION_CONTROLLER_ENABLED=true` and `ATTENTION_CONTROLLER_SHADOW_MODE=false`. |
-| Memory consolidation | Implemented service, not automatically scheduled | `MemoryConsolidationService` can create and execute jobs, but app startup does not start a periodic 30-minute loop or enqueue jobs automatically. |
-| Metrics/dashboard | Research operations implemented; metric streaming partial | The responsive React operator console renders research runtime controls, inquiry review, calibration labeling/strata, verified-source feedback, the hash-chained ledger, and system telemetry. Metrics ChromaDB initialization is asynchronous and not awaited at startup. The WebSocket sends an initial snapshot then waits for client messages; broadcast updates are not implemented. |
+| Memory consolidation / sleep | Implemented, governed, default disabled | `SleepCycleCoordinator` owns idle signal generation; the unified governor owns execution. When enabled initially by `SLEEP_CYCLE_ENABLED` or later through the Autonomy UI, genuine idle time, cooldown, local-provider policy, and global/per-user de-duplication gate a bounded episodic-to-semantic, replay, and pattern pipeline. New user activity cancels in-flight work. Every coordinator/job outcome is written to the executive ledger and a more detailed sleep ledger. Disabled mode creates no scheduler task. |
+| Autonomous executive control | Implemented; initiative categories default disabled | `AutonomousWorkGovernor` is the single admission and execution authority for sleep, reflection, discovery, curiosity, self-assessment, proactive engagement, summary updates, and STM flushes. Every task uses one durable contract with trigger/signals, de-duplication key, local-only provider policy, priority, timeout, rate/concurrency limits, bounded retry, result, and cancellation state. Foreground activity preempts interruptible work. SQLite persists tasks and runtime toggles; a database-protected append-only SHA-256 chain audits all decisions and outcomes. Summary/STM housekeeping defaults on; all initiative-producing categories default off. |
+| Metrics/dashboard | Research and autonomy operations implemented; metric streaming partial | The responsive React operator console renders research runtime controls, inquiry review, calibration labeling/strata, verified-source feedback, autonomous master/category controls, bounded-task history/actions, both hash-chained audit surfaces, and system telemetry. Metrics ChromaDB initialization is asynchronous and not awaited at startup. The WebSocket sends an initial snapshot then waits for client messages; broadcast updates are not implemented. |
 | Multimodal input | Partial | Audio transcription is wired into the cycle. `VisualInputProcessor` exists but is not wired into application startup or the cognitive cycle. |
 | Provider selection | Implemented, configuration-driven | `build_active_provider()` in `src/providers/factory.py` resolves generation, embedding, moderation, and synthesis independently. Mixed selections are composed by `CompositeProvider`; a uniform selection returns the single adapter. Unknown values fail startup. |
 | End-to-end cycle | Verified running | First real `/chat` cycles completed on August 1, 2026. Fully local: 103s. Local agents with Gemini synthesis: 44.8s first turn, 66.8s with memory context. Memory recall across turns confirmed (name and detail correctly retrieved from a prior cycle). |
@@ -33,7 +34,7 @@ This document describes the Emergent Cognitive Architecture (ECA), a brain-inspi
 | Application memory scoring | Repaired and live-verified | The primary collections use Chroma's default squared-L2 distance, but `MemoryService` previously applied a discontinuous cosine-style conversion: a closer `0.865` result scored `0.135` while a worse `1.088` result scored `0.479`. Metric-aware conversion now maps normalized L2 vectors onto cosine-comparable scores. A matched live query changed from zero Cognitive Brain memories and a failed clarification to three LTM memories and correct recall of Tom and Leeds. |
 | Research escalation | Complete guarded round trip, review surface, and runtime control plane; disabled/shadowed by default | `CognitiveResearchDrive` combines bounded uncertainty, conflict, novelty/prediction error, volatility, stakes, persistence, expected information gain, privacy/cost inhibition, hysteresis, and cooldown. `InquiryCandidateStore` durably de-duplicates waking/reflection/dream inquiries and tracks waking review, approval, success, and retryable failure. The operator UI and authenticated APIs list, inspect, approve, dismiss, and retry inquiries. `WakingInquiryService` can resolve locally, defer, require user approval, or cross both the cognitive and policy gates. `GeminiGroundedResearchProvider` uses Google Search grounding and accepts only URL-annotated claims; `ResearchService` independently validates IDs, provider identity, question-only context, URLs, source references, and bounds. Cognitive Brain receives only verified packets and emits deterministic source links. A database-enforced append-only, hash-chained ledger captures reviews, policy decisions, packets, source feedback, calibration labels, and runtime changes. Provider access, active control, and automatic non-explicit research are separately interlocked UI toggles; the final transition requires typed confirmation, and emergency stop disables all three. State is restored from the ledger after restart. Defaults remain provider-disabled, controller-shadowed, and explicit-approval-required. |
 | Salience network | Implemented, default disabled/shadowed; advisory only | `SalienceNetwork` produces a deterministic alternative ranking after MemoryAgent retrieval from bounded query relevance, recency, emotional salience, novelty, goal alignment, and must-keep signals. It preserves the complete baseline order, records scores/contributions/reasons in cycle metadata and metrics, and can expose compact Working Memory hints only when enabled outside shadow mode. It never prunes a memory. Consolidation jobs retain the unchanged baseline selection plus a replay-order advisory. |
-| Validation | Repaired baseline | The repository virtual environment runs `163 passed, 3 skipped` on August 2, 2026. The React production build passes TypeScript checking and compiles with Vite `8.2.0`, Node `v24.18.1`, and npm `11.16.0`; `npm audit` reports zero vulnerabilities. Desktop and responsive operator layouts were rendered against the live local API before the toolchain migration, and the migrated Vite runtime/proxy completed an authenticated live API smoke; a fresh interactive browser session was unavailable for the post-migration pass. The research-drive fixture has 20 reviewed synthetic cases and measures action accuracy `1.000`, escalation precision `1.000`, and escalation recall `1.000`. A guarded live Gemini smoke test returned 2 verified claims from 2 URL sources after 2 searches in `5567.7ms`. This is a deterministic regression and connectivity baseline, not proof of real-world calibration or biological equivalence. The three skipped root-level async tests are not collected by an async test plugin. |
+| Validation | Repaired baseline | The repository virtual environment runs `186 passed, 3 skipped` on August 2, 2026. The suite now includes governed-work API/runtime control, rejection, de-duplication, retry, waking cancellation, restart-persistent controls, local-provider enforcement, immutable ledger protection, governed-sleep lifecycle/recovery, provenance, and a real ephemeral-Chroma semantic round trip. The React production build passes TypeScript checking and compiles with Vite `8.2.0`, Node `v24.18.1`, and npm `11.16.0`; `npm audit` reports zero vulnerabilities. Desktop and responsive operator layouts were rendered against the live local API before the toolchain migration, and the migrated Vite runtime/proxy completed an authenticated live API smoke; the new autonomy view has compile/build validation but not a fresh interactive visual pass. The research-drive fixture has 20 reviewed synthetic cases and measures action accuracy `1.000`, escalation precision `1.000`, and escalation recall `1.000`. A guarded live Gemini smoke test returned 2 verified claims from 2 URL sources after 2 searches in `5567.7ms`. This is a deterministic regression and connectivity baseline, not proof of real-world calibration or biological equivalence. The three skipped root-level async tests are not collected by an async test plugin. |
 
 The phase sections below retain the design intent. Treat statements about autonomous background execution, measured performance improvements, or real-time streaming as planned unless this status section explicitly marks them implemented.
 
@@ -63,7 +64,7 @@ What the numbers establish:
 The two changes directly indicated by the August 1 measurements are implemented:
 
 - Meta-cognitive uncertainty generation is bounded by `META_COGNITIVE_MAX_OUTPUT_TOKENS` (default `64`) and a second hard `META_COGNITIVE_MAX_RESPONSE_WORDS` limit (default `40`).
-- Per-turn summary generation and STM-flush summarisation are enqueued through `BackgroundTaskQueue` when it is wired. A per-user lock serialises summary writes; isolated/test construction retains a synchronous fallback.
+- Per-turn summary generation and STM-flush summarisation enter `AutonomousWorkGovernor` through the compatibility queue adapter. They receive durable identities, local-only provider checks, bounded retries/timeouts, de-duplication, and audit records; a per-user lock still serialises summary writes and isolated/test construction retains a synchronous fallback.
 
 Two matched post-change cycles were preserved with local agents and Gemini synthesis:
 
@@ -76,7 +77,7 @@ Two matched post-change cycles were preserved with local agents and Gemini synth
 | `cognitive_brain_synthesis` | 2.38s | 2.60s | 3.0-3.2s |
 | deferred summary, outside response | 4.09s | 5.05s | included inside `memory_upsert` |
 
-The targeted stages are now validated: metacognition is about `98%` faster on the formerly unbounded path, and request-path memory work is about `74-81%` faster. End-to-end time still varies with generated agent tokens; Stage 1 and Stage 2 consumed `85-89%` of both measured cycles. Background work is in-process and is cancelled during application shutdown; it is not a durable job queue.
+The targeted stages are now validated: metacognition is about `98%` faster on the formerly unbounded path, and request-path memory work is about `74-81%` faster. End-to-end time still varies with generated agent tokens; Stage 1 and Stage 2 consumed `85-89%` of both measured cycles. Task state and audit history are now durable, while executable coroutines remain single-process: an interrupted running task is marked cancelled/recoverable after restart and may be retried through its registered handler.
 
 The first matched run also exposed a retrieval correctness fault. Chroma's default collection metric is squared L2, while `_distance_to_score()` assumed cosine-style distance below `1.0` and reciprocal normalization above it. This discontinuity rejected the nearest brother-memory records at the default `0.5` threshold. Metric-aware conversion restored monotonic ranking and a second matched cycle retrieved three LTM records and correctly recalled `Tom` and `Leeds`.
 
@@ -617,7 +618,7 @@ class WorkingMemoryContext:
 
 **Purpose:** Background memory consolidation like human sleep processing
 
-**Runtime status:** Job creation and execution methods exist. **Validation status:** End-to-end consolidation and retrieval impact are not measured. **Operational limitation:** Application startup does not schedule the periodic loop, and the current job/service contract has known call-signature mismatches.
+**Runtime status:** The service contract and lifecycle are implemented. `SleepCycleCoordinator` is constructed at startup but creates a scheduler task only when `SLEEP_CYCLE_ENABLED=true`. It admits work after configured inactivity and cooldown, requires a fully local provider stack by default, de-duplicates runs, and cancels promptly when a waking request arrives or the application shuts down. **Validation status:** deterministic tests cover gates, cancellation, stage-aware recovery, missing sources, replay metadata, Chroma semantic round trips, provenance, and ledger immutability/integrity. Retrieval-quality improvement from real sleep cycles is not yet measured. **Operational limitation:** sleep is deliberately disabled by default and currently targets the fixed single-operator `SYSTEM_USER_ID`.
 
 **Dream-cycle research boundary:** Consolidation proposes a durable `InquiryCandidate` only when an extracted pattern is marked as an unresolved contradiction, anomaly, question, missing link, or research need. Reflection and discovery can make the same offline handoff. Candidates retain question, hypothesis, source-cycle/pattern provenance, drive assessment, priority, expected information gain, status, and expiry; active duplicates merge and new evidence re-queues retryable failures. The queue has no provider capability. `WakingInquiryService` must claim and freshly reassess a candidate before it can resolve locally, defer, await approval, or research. Dream/reflection candidates require explicit waking user approval by default even when the active controller recommends research.
 
@@ -626,9 +627,11 @@ class WorkingMemoryContext:
   1. **Episodic-to-semantic**: High-priority cycles (>0.7) → LLM generates narratives → extract semantic concepts
   2. **Memory replay**: Mark memories as replayed for strengthening
   3. **Pattern extraction**: LLM analyzes cycles to discover behavioral patterns
-- **Background loop**: Implemented as a callable loop with a 30-minute default, but not started by application lifecycle.
+- **Governed scheduler**: One application-owned loop checks bounded idle work, starts only behind `SLEEP_CYCLE_ENABLED`, uses a six-hour default cooldown, and yields immediately to user activity.
 - **Priority-based**: Only consolidates high-priority memories (emotional, novel, personal)
-- **Semantic concept extraction**: Groups cycles by topic, LLM extracts concepts
+- **Semantic concept extraction**: Groups cycles by topic, LLM extracts concepts into identity-stamped `episodic_memories_v2` and `semantic_memories_v2` collections using explicit active-provider embeddings. Stable record IDs make retries idempotent, and provider/model/job/source-cycle provenance is retained.
+- **Stage-aware recovery**: Each cycle records completion independently for episodic conversion, replay, and pattern extraction; a retry selects only unfinished stages and cooldown begins only after the whole sleep run succeeds.
+- **Auditing**: Coordinator and job start, skip, completion, failure, and cancellation events are hash chained in SQLite; database triggers prohibit update and delete.
 
 **Consolidation Job Example:**
 ```python
@@ -975,8 +978,8 @@ AgentOutput(
 **Key Features:**
 - **Pattern Mining**: Extract recurring themes, user preferences, and behavioral patterns
 - **Insight Generation**: Synthesize new understandings from historical data
-- **Autonomous Triggers**: Trigger policies and background task routing are implemented; periodic autonomous scheduling and measured trigger behavior are not yet active.
-- **Proactive Messaging**: Generate conversation starters based on discovered patterns
+- **Autonomous Triggers**: `DecisionEngine` supplies interpretable signal policies, but every accepted task crosses the unified governor's enablement, cooldown, de-duplication, rate, concurrency, timeout, retry, provider, and foreground-preemption checks.
+- **Proactive Messaging**: Shareable patterns submit a separate, opt-in `proactive_engagement` task instead of generating outreach inside reflection/discovery.
 
 **Reflection Types:**
 ```python
@@ -991,8 +994,20 @@ reflection_types = {
 
 **Integration Points:**
 - **MemoryService**: Access to conversation history and patterns
-- **BackgroundTaskQueue**: Asynchronous processing to avoid blocking responses
+- **AutonomousWorkGovernor**: Durable bounded execution and an immutable executive-decision audit surface; `BackgroundTaskQueue` is now a compatibility adapter rather than an independent scheduler
 - **ProactiveEngagementEngine**: Feed insights for conversation initiation
+
+#### **Unified Autonomous-Work Governor (Implemented)**
+
+**Brain analogy:** prefrontal executive control and basal-ganglia action gating. Signal-producing systems may propose work, but they do not grant themselves execution authority.
+
+`AutonomousWorkGovernor` is the only production admission and lifecycle authority for `sleep`, `reflection`, `discovery`, `curiosity`, `self_assessment`, `proactive_engagement`, `summary_update`, and `stm_flush`. Each proposal carries a task/user ID, task type, trigger reason, bounded signal snapshot and payload, priority, de-duplication key, and explicit provider policy. Category policy adds enablement, cooldown, hourly quota, per-user/global concurrency, timeout, retry budget, and whether foreground waking activity preempts the work.
+
+Admission is local-only for every current category. This governor cannot invoke the grounded Gemini research provider and does not alter the independently interlocked research control plane. Discovery may only create an offline `InquiryCandidate`; the waking review/research system remains the sole route across that boundary.
+
+Operational task records and restart-persistent runtime toggles live in `autonomous_work.sqlite3`. Every admission, rejection, duplicate, start, retry, completion, failure, cancellation, runtime change, startup, and shutdown is also appended to a database-protected SHA-256 event chain. On restart, any process-local queued/running coroutine is marked cancelled and recoverable rather than falsely reported as running.
+
+The authenticated `/api/autonomous-work` surface exposes runtime state/update, task list/inspection, cancel/retry, and ledger/integrity operations. The React **Autonomy** workspace provides a master switch, an individual switch and visible operating envelope for all eight categories, live execution counts, recent task actions, and ledger integrity. Memory housekeeping defaults enabled; sleep and initiative-producing behavior default disabled. Enabling sleep dynamically starts its idle coordinator, while disabling it tears the scheduler down without a restart.
 
 #### **Meta-Cognitive Monitor**
 
@@ -1219,7 +1234,7 @@ performance_data = {
 
 **Telemetry & Testing:**
 - Deterministic tests cover bounded scores, stable tie-breaking, aware/naive timestamp handling, must-keep priority, unchanged waking order, shadow non-influence, compact active hints, and unchanged consolidation selection.
-- The full suite passes with `163 passed, 3 skipped`.
+- The full suite passes with `186 passed, 3 skipped`.
 - Application-level fixture comparison and user outcome labels for focus/conciseness remain required before pruning can be designed or authorized.
 
 **Configuration:** `SALIENCE_NETWORK_ENABLED=false` by default. When enabled, `SALIENCE_NETWORK_SHADOW_MODE=true` records decisions without prompt influence; setting shadow mode false permits compact advisory hints, still without pruning. `SALIENCE_NETWORK_TOP_K` defaults to `3`, and `SALIENCE_RECENCY_HALF_LIFE_DAYS` defaults to `30`.
@@ -1236,11 +1251,11 @@ The ECA implements a local, three-tier memory design inspired by human memory hi
 | --- | --- | --- |
 | Immediate transcript | In-process, per-user rolling verbatim buffer of user and assistant turns; bounded by `IMMEDIATE_TOKEN_BUDGET` (default 50,000 estimated tokens). | Not persistent, not shared across processes, and cleared on restart. |
 | Short-term memory | In-process, per-user `ShortTermMemory` cache of full `CognitiveCycle` objects, newest first; default budget is 25,000 estimated tokens. | Per-field embeddings are attempted but optional. Without them, STM semantic recall returns fewer or no matches. |
-| Conversation summary | One active summary per user stores topics, entities, context points, preferences, and identity hints. Each `upsert_cycle` enqueues its update when `BackgroundTaskQueue` is wired, with a per-user lock to prevent overlapping writes; otherwise it falls back to an inline update. | The queue is in-process rather than durable. Summary generation or embedding failure does not stop the conversation, and shutdown can cancel unfinished work, so a summary may be stale or unembedded. |
+| Conversation summary | One active summary per user stores topics, entities, context points, preferences, and identity hints. Each `upsert_cycle` submits a uniquely keyed `summary_update` contract to the governor, with a per-user lock around the write; isolated construction falls back to inline execution. | Task state, retry outcome, and audit history are durable, but the live coroutine is process-local. A restart marks interrupted work cancelled/recoverable; summary generation still degrades non-fatally and a summary may remain stale or unembedded until retried. |
 | Long-term memory | ChromaDB persists full cycle JSON plus supplied vector embeddings, compact documents, and metadata. Patterns are stored separately. | Chroma retrieval order is normalized in application code; it is not a database ordering guarantee. |
 | Memory query | Query embedding, then STM cosine search, then Chroma vector search; results are merged and ranked by score. Default threshold is 0.5. An optional post-retrieval SalienceNetwork records an explainable alternative ordering without mutating this baseline. | Direct Chroma ranking has a reproducible 50-query synthetic baseline, and corrected L2 conversion passed a live recall check. Salience has deterministic contract tests but has not yet been compared through the application-level fixture or calibrated against user outcomes; pruning does not exist. |
-| STM flush | On token pressure, the service queues summarisation of selected cycles when the background queue is wired; the worker ensures LTM upserts before removing them from STM. Without a queue it uses the synchronous path. | Signal emission is conditional on `DecisionEngine` wiring. The queue has no persistence or automatic retry/recovery, and unfinished work is cancelled on application shutdown. |
-| Episodic/semantic consolidation | `MemoryConsolidationService` can create jobs for episodic-to-semantic conversion, replay, and pattern extraction. | No periodic job loop is started by application startup. The currently implemented service has incompatible `MemoryService` calls that must be repaired before it can be relied upon. |
+| STM flush | Token pressure submits one de-duplicated `stm_flush` contract; the worker summarises selected cycles, ensures LTM upserts, then removes them from STM. | Governed retries and operator retry exist, but source cycles must still be available. Signal emission remains conditional on `DecisionEngine` wiring. |
+| Episodic/semantic consolidation | `SleepCycleCoordinator` owns idle signal generation while execution crosses the same governor contract as every other autonomous task. The stage-aware episodic-to-semantic, replay, and pattern pipeline retains its more detailed domain ledger and provenance. | Real-cycle memory-quality benefit remains uncalibrated. Sleep is UI/ configuration opt-in, local-provider-only, single-process, and cancelled by waking activity or shutdown. |
 
 ### Operational Memory Flow
 
@@ -1249,7 +1264,7 @@ Cycle completed
   -> attempt per-field embeddings (non-fatal)
   -> append user/assistant turns to immediate transcript
   -> add full cycle to token-bounded STM
-  -> enqueue conversation-summary update when the background queue is wired (non-fatal)
+  -> submit a bounded conversation-summary task to the governor (non-fatal)
   -> upsert full cycle to ChromaDB LTM
   -> on STM pressure: enqueue summarisation, ensure LTM upsert, then remove from STM
 ```
@@ -1540,10 +1555,10 @@ PROACTIVE_MIN_TRUST_LEVEL = 0.4     # Minimum trust to reach out
 
 #### Integration Points
 
-1. **SelfReflectionEngine** → generates proactive messages from discovered patterns
-2. **DiscoveryEngine** → shares curiosity-driven insights
+1. **SelfReflectionEngine** → proposes a separately governed proactive task for shareable patterns
+2. **DiscoveryEngine** → proposes governed curiosity-driven outreach
 3. **EmotionalMemoryService** → tracks user reactions and adjusts trust/cooldowns
-4. **BackgroundTaskQueue** → processes proactive message generation asynchronously
+4. **AutonomousWorkGovernor** → applies the independent opt-in, cooldown, quota, de-duplication, local-only, cancellation, retry, and audit contract
 
 #### Observability
 
@@ -1571,10 +1586,12 @@ Example log:
 2. **Memory replay**: Strengthen important memories by marking as replayed
 3. **Pattern extraction**: Discover behavioral patterns across cycles
 
-**Background Loop:**
-- Implemented as a callable loop with a 30-minute default
-- Can check whether consolidation is needed (`should_consolidate()`)
-- Is not started by application lifecycle, so it is currently neither periodic nor autonomous
+**Governed Background Lifecycle:**
+- `SleepCycleCoordinator` is the sole scheduler owner and creates no task while disabled.
+- Admission requires configured idle time, completed-run cooldown, an available candidate set, and (by default) a wholly local generation/embedding/safety stack.
+- One global run lock plus per-user task tracking prevents overlapping work; a waking request cancels that user's active job before the foreground cycle proceeds.
+- Each consolidation stage has an independent durable completion marker, so interrupted runs retry unfinished work without repeating completed stages.
+- Coordinator and job outcomes are persisted to the append-only `SleepCycleLedger`; shutdown cancels and awaits owned tasks before memory and ledger teardown.
 
 **LLM-Powered Pattern Extraction:**
 ```python
@@ -1844,10 +1861,11 @@ performance_data = {
       - autonomous:self_assess
       - autonomous:curiosity
     ↓
-14. MEMORY CONSOLIDATION (Service available; scheduling not wired)
-  • `MemoryConsolidationService` can check `should_consolidate()` and execute a requested job.
-  • The current application startup does not start a periodic loop or automatically enqueue consolidation jobs.
-  • When explicitly executed, jobs process high-priority cycles, generate episodic narratives, extract semantic concepts, and store them in ChromaDB.
+14. MEMORY CONSOLIDATION (Governed sleep; disabled by default)
+  • Startup constructs one `SleepCycleCoordinator`; it creates no background task unless `SLEEP_CYCLE_ENABLED=true`.
+  • Idle time, cooldown, local-provider policy, candidate availability, and run locks gate each bounded pipeline; new waking activity cancels sleep inference.
+  • Completed stages are durably marked so interrupted runs resume only unfinished stages. Semantic output retains generation/embedding/source/job provenance and is retrievable by Cognitive Brain.
+  • Every run and job terminal state is appended to the tamper-evident sleep ledger.
     ↓
 13. RESPONSE TO USER
 ```
@@ -1876,9 +1894,10 @@ OrchestrationService (Conductor)
 │   ├── SummaryManager (summaries)
 │   ├── AutobiographicalMemorySystem (episodic/semantic)
 │   └── ChromaDB (LTM persistence)
-├── DecisionEngine (autonomous triggers)
-│   └── BackgroundTaskQueue (async execution)
-├── MemoryConsolidationService (explicit jobs; scheduler not wired)
+├── DecisionEngine (autonomous signal policies)
+├── AutonomousWorkGovernor (single admission/execution/audit authority)
+│   └── BackgroundTaskQueue (legacy compatibility adapter)
+├── SleepCycleCoordinator → MemoryConsolidationService (idle signal + governed jobs)
 ├── MetaCognitiveMonitor (knowledge boundaries)
 ├── ReinforcementLearningService (strategy learning)
 ├── ProceduralLearningService (skill refinement)

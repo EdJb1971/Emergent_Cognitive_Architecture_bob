@@ -40,6 +40,7 @@ class MetricType(Enum):
     META_COGNITIVE = "meta_cognitive"
     ATTENTION_DIRECTIVE = "attention_directive"
     SALIENCE_ASSESSMENT = "salience_assessment"
+    SLEEP_CYCLE = "sleep_cycle"
 
 
 @dataclass
@@ -355,6 +356,9 @@ class MetricsService:
                 else "salience_advisory_shadow"
             )
             self.counters[mode_key] += 1
+
+        elif event.type == MetricType.SLEEP_CYCLE:
+            self.counters[f"sleep_cycle_{event.data.get('status', 'unknown')}"] += 1
 
     def _cleanup_old_events(self):
         """Remove events older than retention period"""

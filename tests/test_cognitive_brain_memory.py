@@ -5,6 +5,7 @@ from uuid import uuid4
 import pytest
 
 from src.models.core_models import CognitiveCycle
+from src.models.agent_models import SemanticMemory
 from src.models.memory_models import ConversationSummary, MemoryAccessStats
 from src.services.cognitive_brain import CognitiveBrain
 from src.models.research_models import (
@@ -74,6 +75,48 @@ async def test_response_generation_uses_memory_context(llm_service, memory_servi
     memory_service.summary_manager.get_or_create_summary.assert_awaited_once_with(cycle.user_id)
     memory_service.query_memory.assert_awaited_once()
     memory_service.get_access_stats.assert_awaited_once_with(cycle.user_id)
+
+
+@pytest.mark.asyncio
+async def test_response_generation_consumes_consolidated_semantic_memory(
+    llm_service, memory_service
+):
+    cycle = CognitiveCycle(
+        user_id=uuid4(),
+        session_id=uuid4(),
+        user_input="How should you explain this?",
+    )
+    autobiography = MagicMock()
+    autobiography.query_semantic_memories = AsyncMock(
+        return_value=[
+            SemanticMemory(
+                concept_id=str(uuid4()),
+                concept_name="prefers_diagrams",
+                description="The user prefers visual explanations.",
+                confidence=0.86,
+                first_learned=cycle.timestamp,
+                last_reinforced=cycle.timestamp,
+                category="user_preference",
+            )
+        ]
+    )
+    brain = CognitiveBrain(
+        llm_service=llm_service,
+        memory_service=memory_service,
+        autobiographical_system=autobiography,
+    )
+
+    await brain.generate_response(cycle)
+
+    prompt = llm_service.generate_text.call_args.kwargs["prompt"]
+    assert "Consolidated Semantic Knowledge" in prompt
+    assert "prefers_diagrams: The user prefers visual explanations." in prompt
+    autobiography.query_semantic_memories.assert_awaited_once_with(
+        user_id=str(cycle.user_id),
+        query=cycle.user_input,
+        min_confidence=0.55,
+        limit=3,
+    )
 
 
 @pytest.mark.asyncio

@@ -59,8 +59,9 @@ All four recurring error classes are now at zero across a two-turn conversation.
 - Research activation is controllable from that interface. Provider access, active cognitive control, and automatic non-explicit research are separate interlocked stages. Automatic activation requires the exact typed confirmation, every transition is appended to the ledger and restored after restart, and emergency stop returns the system to provider-disabled, shadow, explicit-approval-required posture. A configured Gemini key uses the preselected research model, while provider access remains disabled by default.
 - Frontend security/tooling is repaired. Create React App and its vulnerable webpack development graph were removed in favor of Vite `8.2.0`; direct Axios/PostCSS/UUID dependencies were updated, TypeScript checking is part of every production build, development and preview bind only to localhost, and a server-side same-origin proxy injects `API_KEY` without embedding it in the normal browser bundle. `npm audit` now reports `0` vulnerabilities, down from `55` (`29` high and `2` critical).
 - The salience foundation is implemented and remains disabled/shadowed by default. It records a complete explainable alternative ranking after waking retrieval and for sleep replay, preserves baseline order/selection, and exposes only bounded Working Memory hints when explicitly made active. The previously unwired emotional-salience encoder now persists affective tags on completed cycles. No pruning path exists.
+- Reliable sleep/consolidation is implemented and disabled by default. A single lifecycle owner admits bounded work only after idle, cooldown, candidate, and local-provider gates; waking activity and shutdown cancel inference. Episodic and semantic outputs persist with stable IDs and full source/provider/embedding provenance, Cognitive Brain retrieves semantic knowledge, completed stages resume safely, and an append-only hash-chained ledger records every run and job outcome.
 
-**Test baseline:** `163 passed, 3 skipped` on August 2, 2026. The frontend passes TypeScript checking and a Vite `8.2.0` production build with Node `v24.18.1` and npm `11.16.0`; Vitest exits cleanly with no frontend test files, and `npm audit` reports zero findings. Desktop and compact responsive layouts were rendered against the live local API before migration; the migrated localhost runtime and authenticated proxy passed a live API smoke, while a fresh interactive browser session was unavailable. The skips are three root-level async tests that are not handled by an async test plugin. The 20-case synthetic research-drive fixture measures action accuracy `1.000`, escalation precision `1.000`, and escalation recall `1.000`; the real-cycle capture/label/summary mechanism is implemented but representative labeled observations have not yet accumulated.
+**Test baseline:** `186 passed, 3 skipped` on August 2, 2026. The backend suite includes governed-work API/runtime control, admission/rejection, de-duplication, retry, waking cancellation, persistent toggles, local-only enforcement, append-only ledger integrity, governed-sleep lifecycle/recovery, provenance, and a real ephemeral-Chroma semantic round trip. The frontend passes TypeScript checking and a Vite `8.2.0` production build with Node `v24.18.1` and npm `11.16.0`; Vitest exits cleanly with no frontend test files, and `npm audit` reports zero findings. Desktop and compact responsive research layouts were rendered against the live local API before migration; the new autonomy workspace passes TypeScript and production-build validation but still needs a fresh interactive visual pass. The skips are three root-level async tests that are not handled by an async test plugin. The 20-case synthetic research-drive fixture measures action accuracy `1.000`, escalation precision `1.000`, and escalation recall `1.000`; the real-cycle capture/label/summary mechanism is implemented but representative labeled observations have not yet accumulated.
 
 **Latency is now measured, not guessed.** `StageTimer` wraps every orchestrator stage and emits a `CYCLE_TIMING` line plus `metadata["stage_timings_ms"]`; `OLLAMA_CALL` and `OLLAMA_EMBED` lines give per-request server, queue, prompt-eval, and eval time. Three cycles on August 1, 2026 overturned the previous assumption:
 
@@ -74,7 +75,7 @@ All four recurring error classes are now at zero across a two-turn conversation.
 **First latency-reduction slice completed on August 2, 2026:**
 
 1. Meta-cognitive uncertainty output is capped at 64 tokens and hard-truncated to 40 words by default.
-2. Per-turn summary generation and STM-flush summarisation are queued off the response path when `BackgroundTaskQueue` is wired, with a per-user lock around summary writes.
+2. Per-turn summary generation and STM-flush summarisation are submitted to the durable autonomous-work governor off the response path, with a per-user lock around summary writes.
 3. The synchronous fallback remains for isolated/test construction. The production queue is in-process and non-durable; shutdown cancels unfinished jobs.
 
 Two matched post-change cycles are now preserved. Meta-cognition measured `0.53-0.54s` versus the prior `20-25s` slow path; `memory_upsert` measured `3.92-4.24s` versus `16-22s`, while its deferred summaries completed `4.09-5.05s` after the response path. Total cycles were `65.74s` and `49.12s`; Stage 1 and Stage 2 generation still consumed `85-89%`, so agent output volume remains the next latency lever. Do not raise `max_interactive` without a separate VRAM/contention measurement.
@@ -246,18 +247,18 @@ Cloud research is a capability, not the default model. The local final synthesiz
 
 **Goal:** Make the existing STM, summary, LTM, and consolidation design reliable with local models and measurable retrieval quality.
 
-**Current status:** Implemented in parts, with a reproducible direct-ranking baseline but no end-to-end reliability validation. STM, background summary updates, ChromaDB storage, and the consolidation service exist. The diverse synthetic corpus is complete; application-level expected-fact evaluation, periodic consolidation scheduling, cleanup policy, and recovery verification remain incomplete.
+**Current status:** Core memory and governed sleep paths are implemented with deterministic reliability coverage and a reproducible direct-ranking baseline. The sleep scheduler remains disabled by default pending real-cycle validation and tuning. Application-level expected-fact evaluation, STM cleanup/snapshot policy, summary fault-injection/recovery work, and measured sleep-cycle retrieval benefit remain incomplete.
 
 1. Make all memory budgets model-neutral. Derive STM/context reserves from active provider capabilities instead of Gemini-specific limits.
 2. Complete for direct vector ranking: the version 2 fixture seeds 25 synthetic records and evaluates 50 reviewed queries in an ephemeral collection. It includes time-sensitive cases and expected-fact labels without depending on mutable personal memory.
 3. Local measurement complete: the canonical seeded corpus measured recall, MRR, and NDCG of `1.000` at k=1 and k=5 with `embeddinggemma:latest`; the earlier personal-database smoke run measured `0.958`, `0.958`, and `0.952` at k=5. The evaluator reports partial recall and ranking failures. Define an acceptable delta before any cross-provider comparison; the synthetic corpus is safe to compare, but no retained Gemini collection exists.
-4. Preserve provenance: summaries and semantic memories must retain source cycle IDs, generation provider/model, timestamps, and embedding version.
+4. Partially complete: episodic and semantic memories retain source cycle IDs, consolidation job, generation provider/model, timestamps, and embedding identity/version. Summary provenance still needs the same contract.
 5. Add per-user locking and fault-injection tests for summary-before-flush, failed upserts, and interrupted recovery.
 6. Add a deliberate STM cleanup and snapshot policy: retention bounds, recovery age limits, periodic snapshots, and no silent data deletion.
-7. After repairing and testing the consolidation contract, start its scheduler only behind an enable flag, with one lifecycle owner, task de-duplication, cooldowns, and a shutdown test.
-8. Record memory metrics: retrieval latency, hit source (STM/summary/LTM), flush reason, token counts before/after, summary failures, and consolidation outcome.
-9. Repair and test the consolidation service contract before scheduling it: implement or replace its missing `MemoryService.get_user_cycles()` dependency and pass both `user_id` and `cycle_id` to `get_cycle_by_id()`.
-10. Verify the episodic-to-semantic extraction path has a persistent destination and a retrieval path before presenting semantic memories as available to CognitiveBrain.
+7. Complete: the scheduler is behind `SLEEP_CYCLE_ENABLED`, has one lifecycle owner, idle/cooldown/local-provider gates, task de-duplication, waking cancellation, and cancellation-safe shutdown coverage. Disabled mode creates no task.
+8. Partially complete: sleep completion/failure/cancellation metrics exist. Retrieval latency, hit source (STM/summary/LTM/semantic), flush reason, token counts before/after, and summary failures remain.
+9. Complete: `MemoryService.get_user_cycles()` exists and every consolidation lookup is scoped by both `user_id` and `cycle_id`; missing sources fail the job instead of producing a false success.
+10. Complete: episodic and semantic outputs use explicit active-provider embeddings in identity-stamped v2 Chroma collections, retain provenance, survive a real ephemeral-Chroma round trip, and semantic knowledge is supplied to Cognitive Brain synthesis.
 11. Test summary identity extraction on diverse inputs and treat regex matching as a fallback heuristic, not a durable identity system.
 12. Implemented: a persistent offline `InquiryCandidate` queue accepts waking, reflection, and dream/consolidation output. Candidates retain question, hypothesis, source-cycle/pattern provenance, full drive assessment, priority, expected information gain, status, and expiry. Active duplicates merge, failed duplicates re-queue on new evidence, and waking review can resolve, defer, await approval, research, or record retryable failure. Consolidation has no provider route. Authenticated list/inspect/approve/dismiss/retry APIs, immutable history, and the React operator view are complete. Explicit approval remains the default; automatic scheduling can be deliberately enabled only through the interlocked runtime control plane.
 
@@ -301,7 +302,7 @@ Cloud research is a capability, not the default model. The local final synthesiz
 1. Complete: advisory-only ranking after MemoryAgent retrieval combines query relevance, recency, emotional salience, novelty, goal alignment, and must-keep flags.
 2. Complete: the versioned assessment returns top-$k$, scores, factor contributions, reasons, the entire recommended order, and the untouched baseline order.
 3. Complete for the waking foundation: full assessments are audited in cycle metadata/metrics; active advisory mode emits concise Working Memory hints while CognitiveBrain excludes the verbose object. Shadow mode emits no hint, and neither mode prunes.
-4. Complete for the sleep hook: consolidation jobs can retain a replay advisory alongside their unchanged baseline selection. Actual scheduling and reliable consolidation remain Phase 7 work.
+4. Complete for the sleep hook: consolidation jobs retain a replay advisory alongside the unchanged baseline selection, and the reliable opt-in sleep coordinator now consumes that selection without enabling salience pruning.
 5. Pending: compare advisory rankings with baseline retrieval through the application-level memory fixture before considering any pruning design.
 6. Pending: add user-facing outcome measures for focus and conciseness, not just reduced context size.
 
@@ -311,14 +312,14 @@ Cloud research is a capability, not the default model. The local final synthesiz
 
 **Goal:** Make reflection, discovery, self-assessment, curiosity, proactive engagement, and consolidation safe background capabilities rather than incidental tasks.
 
-**Current status:** `DecisionEngine` and `BackgroundTaskQueue` exist, but autonomous behavior needs explicit scheduling, de-duplication, auditing, and evaluation.
+**Current status:** Core implementation complete. `AutonomousWorkGovernor` now acts as the prefrontal/basal-ganglia-inspired execution gate for sleep, reflection, discovery, curiosity, self-assessment, proactive engagement, summary updates, and STM flushes. `BackgroundTaskQueue` remains only as a compatibility adapter, and `DecisionEngine` is a signal producer rather than an execution authority. Real-cycle trigger quality and operating thresholds still need calibration.
 
-1. Document every signal source and trigger policy: reflection, discovery, self-assessment, curiosity, STM pressure, summary updates, and consolidation candidates.
-2. Define a task contract with user ID, trigger reason, input metrics snapshot, cooldown, de-duplication key, provider policy, and completion result.
-3. Add per-task rate limits, cancellation, retries, and idempotency; no autonomous task may silently create an unbounded loop.
-4. Apply the research escalation policy to autonomous discovery. A background task may not contact the cloud in local-only mode.
-5. Add audit views and integration tests for trigger thresholds, cooldowns, task failure, shutdown, and duplicate events.
-6. Keep proactive messages opt-in and measure negative reactions before expanding their frequency.
+1. Complete: every signal source maps to one of eight explicit task types with an operator-visible policy envelope; sleep retains its idle signal coordinator but not a separate execution authority.
+2. Complete: the shared durable contract records user/task identity, trigger reason, signal snapshot, payload, priority, cooldown policy, de-duplication key, provider policy, attempt budget, status, timing, result, and failure/rejection reason.
+3. Complete: global and per-user concurrency, hourly quotas, cooldowns, timeouts, bounded retries, active duplicate merging, foreground cancellation, operator cancel/retry, shutdown cancellation, and restart recovery prevent unbounded or falsely-running work.
+4. Complete: all autonomous categories require the active cognitive provider to be local. Autonomous discovery has no cloud route; it can only propose an offline inquiry to the independently gated waking research system.
+5. Complete for the control plane: operational task state and runtime toggles persist in SQLite; a trigger-protected append-only hash chain records every decision/outcome. Authenticated APIs and the responsive Autonomy workspace expose master/category toggles, limits, status, cancel/retry, and integrity. Deterministic tests cover rejection, duplicate events, retry, waking cancellation, persistence, provider enforcement, and SQL immutability.
+6. Complete for safe posture: proactive messaging is independently governed and disabled by default. Pending: accumulate and review real reception data before changing its cooldown/rate envelope.
 
 **Exit criteria:** Autonomous work is bounded, explainable, observable, and respects local-only/provider privacy policy.
 
@@ -396,6 +397,19 @@ INQUIRY_TTL_DAYS=14
 INQUIRY_REQUIRE_USER_APPROVAL=true
 ```
 
+Implemented governed sleep boundary:
+
+```dotenv
+# Disabled mode creates no scheduler task. Automatic runs require a fully local provider stack by default.
+SLEEP_CYCLE_ENABLED=false
+SLEEP_IDLE_MINUTES=30
+SLEEP_CHECK_INTERVAL_SECONDS=60
+SLEEP_COOLDOWN_MINUTES=360
+SLEEP_MAX_CYCLES=20
+SLEEP_REQUIRE_LOCAL_PROVIDER=true
+SLEEP_LEDGER_DB_PATH=./chroma_db/sleep_cycle.sqlite3
+```
+
 The current provider contract always sends `question_only`. A compact/redacted context mode and its maximum size are not configurable until a context-release policy is implemented.
 
 ## Open Decisions
@@ -429,7 +443,8 @@ Still open:
 11. Complete: add the waking inquiry review and calibration API: authenticated list/inspect/approve/dismiss/retry operations, a database-enforced append-only hash chain, persisted decisions/packets, verified-source feedback, real-cycle shadow observations and labels, paginated history, and calibration summaries. Approval remains consent rather than an authorization bypass, and calibration never self-activates automatic non-explicit research.
 12. Complete: add the responsive React operator console and authenticated runtime control plane. Queue review, source feedback, labels, calibration strata, ledger inspection, staged provider/controller/automation toggles, typed confirmation, restart restoration, and emergency stop are live. Defaults remain unchanged.
 13. Complete: implement the advisory SalienceNetwork foundation. Waking retrieval and sleep-candidate discovery retain baseline order/selection and a versioned explainable alternative ranking; shadow mode cannot influence synthesis, active mode supplies only compact hints, and pruning is absent.
-14. **Next code slice:** make sleep/consolidation reliable before scheduling it: repair the MemoryService contract, persist semantic outputs with provenance, add an explicit lifecycle owner, enable flag, idle/cooldown policy, de-duplication, cancellation-safe shutdown, and an audit record for every job/outcome.
-15. Then implement the unified autonomous-work governor, live telemetry streaming, and the remaining sensory path. The research shadow-calibration study and salience baseline comparison remain operator validation work in parallel; neither may self-enable control.
+14. Complete: reliable sleep/consolidation now has repaired user-scoped retrieval, persistent provenance-rich semantic output, Cognitive Brain retrieval, a single lifecycle owner, disabled-by-default enable flag, idle/cooldown/local-provider gates, stage-aware retry, waking cancellation, cancellation-safe shutdown, outcome metrics, and a tamper-evident audit record for every run/job.
+15. Complete: the unified autonomous-work governor now gives reflection, discovery, self-assessment, curiosity, proactive engagement, summary work, STM flushes, and sleep one bounded task contract, policy gate, cancellation model, de-duplication key, retry budget, durable task state, immutable audit surface, authenticated API, and operator UI.
+16. **Next code slice:** implement real event-driven telemetry streaming across cognitive cycles, research, memory, sleep, salience, and autonomous work, replacing the current snapshot-only WebSocket path. Then wire the remaining visual sensory path. The research shadow-calibration study, salience baseline comparison, autonomous-trigger calibration, and real sleep-cycle tuning remain operator validation work in parallel; none may self-enable control.
 
-The next implementation slice is the reliable sleep/consolidation cycle. Salience now supplies its replay-priority input without changing behavior, but the existing consolidation service still has incompatible MemoryService calls, no verified persistent semantic-memory destination/retrieval path, and no owned scheduler lifecycle. Repair and test those boundaries before enabling background sleep. In parallel, ordinary research and salience shadow observations should continue accumulating for later threshold calibration; measurement informs operator decisions and never changes runtime posture autonomously.
+The next implementation slice is the event-driven observability plane. The governor now makes autonomous execution bounded and inspectable, but the dashboard still polls most control state and the metrics WebSocket emits an initial snapshot without server-side broadcasts. Publish typed, bounded events for foreground cycles and every governed subsystem, add reconnect/backpressure semantics, and drive live operator views without turning telemetry into a second source of truth. In parallel, ordinary research, salience, autonomous-trigger, and explicitly enabled sleep observations should accumulate for later calibration; measurement informs operator decisions and never changes runtime posture autonomously.

@@ -33,7 +33,8 @@ class CognitiveBrain:
         self_model_service: Optional[Any] = None,
         working_memory_buffer: Optional[Any] = None,
         theory_of_mind_service: Optional[Any] = None,
-        synthesis_provider: Optional[Any] = None
+        synthesis_provider: Optional[Any] = None,
+        autobiographical_system: Optional[Any] = None,
     ):
         self.llm_service = llm_service
         self.synthesis_provider = synthesis_provider or llm_service
@@ -41,6 +42,7 @@ class CognitiveBrain:
         self.self_model_service = self_model_service
         self.working_memory_buffer = working_memory_buffer
         self.theory_of_mind_service = theory_of_mind_service
+        self.autobiographical_system = autobiographical_system
         logger.info("CognitiveBrain initialized with memory, self-model, working memory, and theory of mind integration.")
 
 
@@ -395,6 +397,7 @@ Agent Analyses:
         """Get relevant memory context for response generation."""
         summary_context = "Current Conversation:\n"
         memory_context = "\nRelevant Past Context:\n"
+        semantic_context = "\nConsolidated Semantic Knowledge:\n  None available."
 
         try:
             # Get current conversation summary
@@ -430,12 +433,31 @@ Agent Analyses:
                     memory_context += f"\n- User: {getattr(memory, 'user_input', '')}\n  Response: {getattr(memory, 'final_response', '')}"
             else:
                 memory_context = "\nRelevant Past Context:\n  No highly relevant past interactions found."
+
+            if self.autobiographical_system:
+                try:
+                    semantic_memories = await self.autobiographical_system.query_semantic_memories(
+                        user_id=str(cognitive_cycle.user_id),
+                        query=cognitive_cycle.user_input,
+                        min_confidence=0.55,
+                        limit=3,
+                    )
+                    if semantic_memories:
+                        lines = ["\nConsolidated Semantic Knowledge:"]
+                        for concept in semantic_memories:
+                            lines.append(
+                                f"- {concept.concept_name}: {concept.description} "
+                                f"(confidence {concept.confidence:.2f})"
+                            )
+                        semantic_context = "\n".join(lines)
+                except Exception as error:
+                    logger.warning("Semantic-memory retrieval failed: %s", error)
             
         except Exception as e:
             logger.error(f"Error getting memory context: {e}", exc_info=True)
             return "Error retrieving memory context."
             
-        return f"{summary_context}\n{memory_context}"
+        return f"{summary_context}\n{memory_context}\n{semantic_context}"
 
     @staticmethod
     def _format_research_context(

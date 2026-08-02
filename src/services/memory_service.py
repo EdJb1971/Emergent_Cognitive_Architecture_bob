@@ -18,6 +18,7 @@ from src.models.memory_models import ConversationSummary, ShortTermMemory, Memor
 from src.services.llm_integration_service import LLMIntegrationService
 from src.services.embedding_identity import apply_embedding_identity, resolve_embedding_identity
 from src.services.summary_manager import SummaryManager
+from src.models.autonomous_work_models import AutonomousTaskType
 from src.services.metrics_service import MetricsService, MetricType
 from src.agents.utils import UUIDEncoder
 
@@ -342,10 +343,21 @@ class MemoryService:
         """Run per-turn summary updates in the background when queueing is available."""
         task_name = f"summary_update_{cognitive_cycle.user_id}_{cognitive_cycle.cycle_id}"
         if self.background_task_queue:
-            self.background_task_queue.enqueue_task(
-                self._run_summary_update(cognitive_cycle),
-                task_name=task_name,
-            )
+            coroutine = self._run_summary_update(cognitive_cycle)
+            try:
+                self.background_task_queue.enqueue_task(
+                    coroutine,
+                    task_name=task_name,
+                    task_type=AutonomousTaskType.SUMMARY_UPDATE,
+                    user_id=cognitive_cycle.user_id,
+                    trigger_reason="cognitive cycle completed; refresh conversation summary",
+                    deduplication_key=f"summary:{cognitive_cycle.user_id}:{cognitive_cycle.cycle_id}",
+                    signals={"cycle_id": str(cognitive_cycle.cycle_id)},
+                    payload={"cycle_id": str(cognitive_cycle.cycle_id)},
+                )
+            except TypeError:
+                # Compatibility for isolated test queues and third-party adapters.
+                self.background_task_queue.enqueue_task(coroutine, task_name=task_name)
             logger.info(
                 f"Queued summary update for user {cognitive_cycle.user_id} in background ({task_name})."
             )
@@ -376,10 +388,20 @@ class MemoryService:
         """Defer expensive STM summarization flush work when a queue is configured."""
         task_name = f"stm_flush_{user_id}_{datetime.utcnow().timestamp()}"
         if self.background_task_queue:
-            self.background_task_queue.enqueue_task(
-                self.flush_to_ltm(user_id, cycles),
-                task_name=task_name,
-            )
+            coroutine = self.flush_to_ltm(user_id, cycles)
+            try:
+                self.background_task_queue.enqueue_task(
+                    coroutine,
+                    task_name=task_name,
+                    task_type=AutonomousTaskType.STM_FLUSH,
+                    user_id=user_id,
+                    trigger_reason="short-term memory token pressure",
+                    deduplication_key=f"stm-flush:{user_id}",
+                    signals={"cycle_count": len(cycles)},
+                    payload={"cycle_ids": [str(cycle.cycle_id) for cycle in cycles]},
+                )
+            except TypeError:
+                self.background_task_queue.enqueue_task(coroutine, task_name=task_name)
             logger.info(f"Queued STM flush for user {user_id} in background ({task_name}).")
             return
         await self.flush_to_ltm(user_id, cycles)
@@ -790,6 +812,76 @@ class MemoryService:
         except Exception as e:
             logger.error(f"Unexpected error during get_cycle_by_id for user {user_id}, cycle {cycle_id}: {e}", exc_info=True)
             raise APIException(detail=f"An unexpected error occurred while retrieving cycle by ID: {e}", status_code=500)
+
+    async def get_user_cycles(self, user_id: UUID, limit: int = 20) -> List[CognitiveCycle]:
+        """Return the user's newest cycles for bounded background processing."""
+        if not 1 <= limit <= 100:
+            raise ValueError("limit must be between 1 and 100")
+        cycles, _ = await self.list_cycles(
+            CycleListRequest(user_id=user_id, skip=0, limit=limit)
+        )
+        return cycles
+
+    async def patch_cycle_metadata(
+        self,
+        user_id: UUID,
+        cycle_id: UUID,
+        metadata_updates: Dict[str, Any],
+    ) -> Optional[CognitiveCycle]:
+        """Deep-merge metadata without replaying normal ingest side effects.
+
+        Consolidation bookkeeping must not duplicate transcript entries, trigger a
+        fresh summary, or regenerate embeddings. The stored document and vector are
+        unchanged; only the serialized cycle metadata is replaced.
+        """
+        if not self.cycles_collection:
+            raise APIException(detail="MemoryService not connected to ChromaDB.", status_code=503)
+        if not isinstance(metadata_updates, dict):
+            raise ValueError("metadata_updates must be a dictionary")
+
+        async with self._get_stm_lock(user_id):
+            result = self.cycles_collection.get(
+                ids=[str(cycle_id)],
+                where={"user_id": str(user_id)},
+                include=["metadatas"],
+            )
+            metadatas = result.get("metadatas", []) if result else []
+            if not metadatas:
+                return None
+            stored_metadata = dict(metadatas[0])
+            cycle = CognitiveCycle(**json.loads(stored_metadata["json_data"]))
+            cycle.metadata = self._deep_merge_dicts(cycle.metadata, metadata_updates)
+            stored_metadata["json_data"] = cycle.model_dump_json()
+            self.cycles_collection.update(
+                ids=[str(cycle_id)],
+                metadatas=[stored_metadata],
+            )
+
+            stm = self._stm_cache.get(user_id)
+            if stm:
+                for cached_cycle in stm.recent_cycles:
+                    if cached_cycle.cycle_id == cycle_id:
+                        cached_cycle.metadata = dict(cycle.metadata)
+                        break
+            logger.info(
+                "AUDIT: Patched cycle metadata for cycle %s and user %s.",
+                cycle_id,
+                user_id,
+            )
+            return cycle
+
+    @staticmethod
+    def _deep_merge_dicts(
+        existing: Dict[str, Any],
+        updates: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        merged = dict(existing)
+        for key, value in updates.items():
+            if isinstance(value, dict) and isinstance(merged.get(key), dict):
+                merged[key] = MemoryService._deep_merge_dicts(merged[key], value)
+            else:
+                merged[key] = value
+        return merged
 
     async def update_cycle_metadata(self, user_id: UUID, cycle_id: UUID, metadata_to_update: Dict[str, Any]) -> bool:
         """

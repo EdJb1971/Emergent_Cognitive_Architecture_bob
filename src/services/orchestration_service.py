@@ -30,6 +30,7 @@ from src.models.multimodal_models import AudioAnalysis
 from src.services.cognitive_brain import CognitiveBrain
 from src.services.memory_service import MemoryService
 from src.services.background_task_queue import BackgroundTaskQueue
+from src.models.autonomous_work_models import AutonomousTaskType
 from src.services.self_reflection_discovery_engine import SelfReflectionAndDiscoveryEngine
 from src.services.working_memory_buffer import WorkingMemoryBuffer
 from src.services.thalamus_gateway import ThalamusGateway
@@ -126,6 +127,8 @@ class OrchestrationService:
         self.waking_inquiry_service = waking_inquiry_service
         self.research_calibration_ledger = research_calibration_ledger
         self.emotional_salience_encoder = emotional_salience_encoder
+        self.sleep_cycle_coordinator = None
+        self.autonomous_work_governor = None
         self.session_start = datetime.utcnow()  # Track session start for contextual encoding
         logger.info("OrchestrationService (Central Agent) initialized with all specialized agents, Cognitive Brain, Memory Service, Background Task Queue, Self-Reflection & Discovery Engine, Working Memory Buffer, Thalamus Gateway, Conflict Monitor, Contextual Memory Encoder, Emotional Memory Service, Meta-Cognitive Monitor, optional Attention Controller, and optional Reinforcement Learning Service.")
 
@@ -146,6 +149,10 @@ class OrchestrationService:
             APIException: If a critical error occurs during orchestration.
         """
         logger.info(f"Orchestrating cognitive cycle for user {user_request.user_id}, session {user_request.session_id}")
+        if self.sleep_cycle_coordinator:
+            self.sleep_cycle_coordinator.note_activity(user_request.user_id)
+        if self.autonomous_work_governor:
+            await self.autonomous_work_governor.note_activity(user_request.user_id)
         timer = StageTimer()
 
         # If audio present, attempt transcription first so everyone can use the text
@@ -1318,7 +1325,12 @@ class OrchestrationService:
         logger.info(f"OrchestrationService: Enqueuing reflection task for user {user_id}, {num_cycles} cycles, type {trigger_type}.")
         self.background_task_queue.enqueue_task(
             self.self_reflection_discovery_engine.execute_reflection(user_id, num_cycles),
-            task_name=f"reflection_task_{user_id}_{datetime.utcnow().timestamp()}"
+            task_name=f"reflection_task_{user_id}_{datetime.utcnow().timestamp()}",
+            task_type=AutonomousTaskType.REFLECTION,
+            user_id=user_id,
+            trigger_reason=f"{trigger_type} reflection request",
+            deduplication_key=f"reflection:{user_id}",
+            signals={"num_cycles": num_cycles, "trigger_type": trigger_type},
         )
         return True
 
@@ -1330,6 +1342,11 @@ class OrchestrationService:
         logger.info(f"OrchestrationService: Enqueuing discovery task for user {user_id}, type {discovery_type}.")
         self.background_task_queue.enqueue_task(
             self.self_reflection_discovery_engine.execute_discovery(user_id, discovery_type, context),
-            task_name=f"discovery_task_{user_id}_{discovery_type}_{datetime.utcnow().timestamp()}"
+            task_name=f"discovery_task_{user_id}_{discovery_type}_{datetime.utcnow().timestamp()}",
+            task_type=(AutonomousTaskType.CURIOSITY if discovery_type == "curiosity_exploration" else AutonomousTaskType.DISCOVERY),
+            user_id=user_id,
+            trigger_reason=f"discovery request: {discovery_type}",
+            deduplication_key=f"discovery:{discovery_type}:{user_id}",
+            signals={"discovery_type": discovery_type},
         )
         return True

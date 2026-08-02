@@ -284,6 +284,9 @@ class EpisodicMemory(BaseModel):
     key_insights: List[str] = Field(default_factory=list, description="Key learnings or insights from this episode")
     sensory_details: Dict[str, Any] = Field(default_factory=dict, description="Sensory details (visual, auditory, etc.)")
     cycle_id: Optional[str] = Field(None, description="Associated cognitive cycle ID")
+    consolidation_job_id: Optional[str] = Field(None, description="Sleep job that created this episode")
+    generation_provider: Optional[str] = Field(None, description="Provider used for narrative generation")
+    generation_model: Optional[str] = Field(None, description="Model used for narrative generation")
 
 
 class SemanticMemory(BaseModel):
@@ -300,6 +303,13 @@ class SemanticMemory(BaseModel):
     last_reinforced: datetime = Field(..., description="When this was last reinforced")
     reinforcement_count: int = Field(default=1, description="How many times this has been reinforced")
     category: str = Field(..., description="Category: user_preference, user_fact, world_knowledge, system_capability, etc.")
+    source_cycle_ids: List[str] = Field(default_factory=list, description="Cognitive cycles supporting this concept")
+    consolidation_job_id: Optional[str] = Field(None, description="Sleep job that distilled this concept")
+    generation_provider: Optional[str] = None
+    generation_model: Optional[str] = None
+    embedding_provider: Optional[str] = None
+    embedding_model: Optional[str] = None
+    provenance_version: int = Field(default=1, ge=1)
 
 
 class UserMentalState(BaseModel):
@@ -334,6 +344,7 @@ class MemoryConsolidationJob(BaseModel):
     Mimics sleep-like memory processing.
     """
     job_id: str = Field(..., description="Unique identifier for this consolidation job")
+    run_id: Optional[str] = Field(None, description="Owning governed sleep-cycle run")
     user_id: str = Field(..., description="User whose memories are being consolidated")
     created_at: datetime = Field(default_factory=datetime.utcnow, description="When this job was created")
     status: str = Field(default="pending", description="pending, processing, completed, failed")

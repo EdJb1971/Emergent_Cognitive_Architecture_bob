@@ -15,12 +15,14 @@ import logging
 import json
 from typing import List, Dict, Any, Optional, Tuple
 from datetime import datetime, timedelta
-from uuid import uuid4
+from uuid import NAMESPACE_URL, uuid4, uuid5
 import chromadb
 from chromadb.config import Settings
 
 from src.models.agent_models import EpisodicMemory, SemanticMemory
 from src.models.core_models import CognitiveCycle
+from src.core.config import settings as app_settings
+from src.services.embedding_identity import apply_embedding_identity, resolve_embedding_identity
 
 logger = logging.getLogger(__name__)
 
@@ -31,10 +33,11 @@ class AutobiographicalMemorySystem:
     Enables rich narrative construction and knowledge extraction.
     """
     
-    def __init__(self):
+    def __init__(self, embedding_service: Optional[Any] = None):
         self.client: Optional[chromadb.Client] = None
         self.episodic_collection = None
         self.semantic_collection = None
+        self.embedding_service = embedding_service
         logger.info("AutobiographicalMemorySystem initialized.")
     
     async def connect(self, client: chromadb.Client):
@@ -43,15 +46,27 @@ class AutobiographicalMemorySystem:
         
         # Episodic memories collection
         self.episodic_collection = self.client.get_or_create_collection(
-            name="episodic_memories",
-            metadata={"description": "Rich episodic memories for mental time travel"}
+            name=app_settings.CHROMA_COLLECTION_EPISODIC,
+            metadata={"description": "Rich episodic memories for mental time travel"},
+            embedding_function=None,
+        )
+        apply_embedding_identity(
+            self.episodic_collection,
+            resolve_embedding_identity(self.embedding_service),
+            enforced=app_settings.EMBEDDING_IDENTITY_ENFORCED,
         )
         logger.info("Connected to episodic_memories collection.")
         
         # Semantic memories collection
         self.semantic_collection = self.client.get_or_create_collection(
-            name="semantic_memories",
-            metadata={"description": "Extracted semantic knowledge and concepts"}
+            name=app_settings.CHROMA_COLLECTION_SEMANTIC,
+            metadata={"description": "Extracted semantic knowledge and concepts"},
+            embedding_function=None,
+        )
+        apply_embedding_identity(
+            self.semantic_collection,
+            resolve_embedding_identity(self.embedding_service),
+            enforced=app_settings.EMBEDDING_IDENTITY_ENFORCED,
         )
         logger.info("Connected to semantic_memories collection.")
     
@@ -61,7 +76,10 @@ class AutobiographicalMemorySystem:
         narrative: str,
         significance: float,
         emotional_tone: str = "neutral",
-        key_insights: Optional[List[str]] = None
+        key_insights: Optional[List[str]] = None,
+        consolidation_job_id: Optional[str] = None,
+        generation_provider: Optional[str] = None,
+        generation_model: Optional[str] = None,
     ) -> EpisodicMemory:
         """
         Create a rich episodic memory from a cognitive cycle.
@@ -76,7 +94,11 @@ class AutobiographicalMemorySystem:
         Returns:
             EpisodicMemory object
         """
-        episode_id = str(uuid4())
+        episode_id = (
+            str(uuid5(NAMESPACE_URL, f"eca:episodic:v1:{cycle.user_id}:{cycle.cycle_id}"))
+            if consolidation_job_id
+            else str(uuid4())
+        )
         
         # Extract participants
         participants = ["user", "system"]
@@ -98,7 +120,10 @@ class AutobiographicalMemorySystem:
             significance=significance,
             key_insights=key_insights or [],
             sensory_details=sensory_details,
-            cycle_id=str(cycle.cycle_id)
+            cycle_id=str(cycle.cycle_id),
+            consolidation_job_id=consolidation_job_id,
+            generation_provider=generation_provider,
+            generation_model=generation_model,
         )
         
         # Store in ChromaDB
@@ -124,13 +149,18 @@ class AutobiographicalMemorySystem:
             "significance": episode.significance,
             "cycle_id": episode.cycle_id or "",
             "participants": json.dumps(episode.participants),
-            "key_insights": json.dumps(episode.key_insights)
+            "key_insights": json.dumps(episode.key_insights),
+            "consolidation_job_id": episode.consolidation_job_id or "",
+            "generation_provider": episode.generation_provider or "",
+            "generation_model": episode.generation_model or "",
         }
-        
-        self.episodic_collection.add(
+
+        embedding = await self._embed(document)
+        self.episodic_collection.upsert(
             ids=[episode.episode_id],
             documents=[document],
-            metadatas=[metadata]
+            metadatas=[metadata],
+            embeddings=[embedding],
         )
         
         logger.debug(f"Stored episodic memory {episode.episode_id} in ChromaDB")
@@ -161,15 +191,17 @@ class AutobiographicalMemorySystem:
             return []
         
         # Build where clause
-        where = {"user_id": user_id}
+        conditions: List[Dict[str, Any]] = [{"user_id": user_id}]
         if min_significance > 0.0:
-            where["significance"] = {"$gte": min_significance}
+            conditions.append({"significance": {"$gte": min_significance}})
+        where = self._where_all(conditions)
         
         try:
             if query:
                 # Semantic search
+                query_embedding = await self._embed(query)
                 results = self.episodic_collection.query(
-                    query_texts=[query],
+                    query_embeddings=[query_embedding],
                     where=where,
                     n_results=limit
                 )
@@ -201,7 +233,10 @@ class AutobiographicalMemorySystem:
                     emotional_tone=metadata.get("emotional_tone", "neutral"),
                     significance=metadata.get("significance", 0.5),
                     key_insights=json.loads(metadata.get("key_insights", "[]")),
-                    cycle_id=metadata.get("cycle_id")
+                    cycle_id=metadata.get("cycle_id"),
+                    consolidation_job_id=metadata.get("consolidation_job_id") or None,
+                    generation_provider=metadata.get("generation_provider") or None,
+                    generation_model=metadata.get("generation_model") or None,
                 )
                 episodes.append(episode)
             
@@ -266,7 +301,11 @@ class AutobiographicalMemorySystem:
         description: str,
         category: str,
         source_episodes: List[str],
-        confidence: float = 0.7
+        confidence: float = 0.7,
+        source_cycle_ids: Optional[List[str]] = None,
+        consolidation_job_id: Optional[str] = None,
+        generation_provider: Optional[str] = None,
+        generation_model: Optional[str] = None,
     ) -> SemanticMemory:
         """
         Extract a semantic memory (fact/concept) from episodic experiences.
@@ -282,9 +321,15 @@ class AutobiographicalMemorySystem:
         Returns:
             SemanticMemory object
         """
-        concept_id = str(uuid4())
+        concept_id = str(
+            uuid5(
+                NAMESPACE_URL,
+                f"eca:semantic:v1:{user_id}:{category.casefold()}:{concept_name.casefold()}",
+            )
+        )
         now = datetime.utcnow()
         
+        identity = resolve_embedding_identity(self.embedding_service)
         semantic_memory = SemanticMemory(
             concept_id=concept_id,
             concept_name=concept_name,
@@ -294,7 +339,13 @@ class AutobiographicalMemorySystem:
             first_learned=now,
             last_reinforced=now,
             reinforcement_count=1,
-            category=category
+            category=category,
+            source_cycle_ids=source_cycle_ids or [],
+            consolidation_job_id=consolidation_job_id,
+            generation_provider=generation_provider,
+            generation_model=generation_model,
+            embedding_provider=identity.provider if identity else None,
+            embedding_model=identity.model if identity else None,
         )
         
         # Store in ChromaDB
@@ -320,13 +371,22 @@ class AutobiographicalMemorySystem:
             "first_learned": concept.first_learned.isoformat(),
             "last_reinforced": concept.last_reinforced.isoformat(),
             "reinforcement_count": concept.reinforcement_count,
-            "source_episode_ids": json.dumps(concept.source_episode_ids)
+            "source_episode_ids": json.dumps(concept.source_episode_ids),
+            "source_cycle_ids": json.dumps(concept.source_cycle_ids),
+            "consolidation_job_id": concept.consolidation_job_id or "",
+            "generation_provider": concept.generation_provider or "",
+            "generation_model": concept.generation_model or "",
+            "embedding_provider": concept.embedding_provider or "",
+            "embedding_model": concept.embedding_model or "",
+            "provenance_version": concept.provenance_version,
         }
-        
-        self.semantic_collection.add(
+
+        embedding = await self._embed(document)
+        self.semantic_collection.upsert(
             ids=[concept.concept_id],
             documents=[document],
-            metadatas=[metadata]
+            metadatas=[metadata],
+            embeddings=[embedding],
         )
         
         logger.debug(f"Stored semantic memory {concept.concept_id} in ChromaDB")
@@ -356,16 +416,18 @@ class AutobiographicalMemorySystem:
             logger.warning("Semantic collection not initialized")
             return []
         
-        where = {"user_id": user_id}
+        conditions: List[Dict[str, Any]] = [{"user_id": user_id}]
         if category:
-            where["category"] = category
+            conditions.append({"category": category})
         if min_confidence > 0.0:
-            where["confidence"] = {"$gte": min_confidence}
+            conditions.append({"confidence": {"$gte": min_confidence}})
+        where = self._where_all(conditions)
         
         try:
             if query:
+                query_embedding = await self._embed(query)
                 results = self.semantic_collection.query(
-                    query_texts=[query],
+                    query_embeddings=[query_embedding],
                     where=where,
                     n_results=limit
                 )
@@ -395,7 +457,14 @@ class AutobiographicalMemorySystem:
                     first_learned=datetime.fromisoformat(metadata["first_learned"]),
                     last_reinforced=datetime.fromisoformat(metadata["last_reinforced"]),
                     reinforcement_count=metadata.get("reinforcement_count", 1),
-                    category=metadata.get("category", "unknown")
+                    category=metadata.get("category", "unknown"),
+                    source_cycle_ids=json.loads(metadata.get("source_cycle_ids", "[]")),
+                    consolidation_job_id=metadata.get("consolidation_job_id") or None,
+                    generation_provider=metadata.get("generation_provider") or None,
+                    generation_model=metadata.get("generation_model") or None,
+                    embedding_provider=metadata.get("embedding_provider") or None,
+                    embedding_model=metadata.get("embedding_model") or None,
+                    provenance_version=int(metadata.get("provenance_version", 1)),
                 )
                 concepts.append(concept)
             
@@ -405,6 +474,18 @@ class AutobiographicalMemorySystem:
         except Exception as e:
             logger.error(f"Error querying semantic memories: {e}")
             return []
+
+    async def _embed(self, text: str) -> List[float]:
+        if not self.embedding_service:
+            raise RuntimeError("AutobiographicalMemorySystem requires an embedding service")
+        return await self.embedding_service.generate_embedding(text=text)
+
+    @staticmethod
+    def _where_all(conditions: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Build valid Chroma filters; multiple fields require an explicit operator."""
+        if len(conditions) == 1:
+            return conditions[0]
+        return {"$and": conditions}
     
     async def reinforce_semantic_memory(self, concept_id: str):
         """

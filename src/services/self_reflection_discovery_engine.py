@@ -12,6 +12,7 @@ from src.core.config import settings
 from src.agents.utils import extract_json_from_response
 from src.models.research_models import CognitiveResearchSignals, InquirySourceType
 from src.services.inquiry_candidate_service import InquiryCandidateService
+from src.models.autonomous_work_models import AutonomousTaskRequest, AutonomousTaskType
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +36,7 @@ class SelfReflectionAndDiscoveryEngine:
         self.memory_service = memory_service
         self.proactive_engine = proactive_engine  # Optional ProactiveEngagementEngine
         self.inquiry_candidate_service = inquiry_candidate_service
+        self.autonomous_work_governor = None
         logger.info("SelfReflectionAndDiscoveryEngine initialized.")
 
     async def _generate_pattern_embedding(self, text: str) -> List[float]:
@@ -138,10 +140,7 @@ class SelfReflectionAndDiscoveryEngine:
                 
                 # Check if pattern is worth sharing proactively
                 if self.proactive_engine and self._should_share_pattern(pattern):
-                    await self.proactive_engine.generate_proactive_message_from_pattern(
-                        user_id=user_id,
-                        pattern=pattern
-                    )
+                    await self._submit_proactive_message(user_id, pattern)
             
             logger.info(f"Stored {len(discovered_patterns)} new patterns for user {user_id}.")
 
@@ -153,13 +152,16 @@ class SelfReflectionAndDiscoveryEngine:
 
         except LLMServiceException as e:
             logger.error(f"Reflection failed for user {user_id} due to LLM error: {e.detail}", exc_info=True)
-            # Optionally update cycle status to 'failed' for these cycles
+            raise
         except json.JSONDecodeError as e:
             logger.error(f"Reflection failed for user {user_id}: LLM response was not valid JSON. Error: {e}. Raw: {llm_response_str[:500]}...", exc_info=True)
+            raise
         except APIException as e:
             logger.error(f"Reflection failed for user {user_id} due to MemoryService error: {e.detail}", exc_info=True)
+            raise
         except Exception as e:
             logger.critical(f"Unexpected error during reflection for user {user_id}: {e}", exc_info=True)
+            raise
 
     async def execute_discovery(self, user_id: UUID, discovery_type: str, context: Optional[str]):
         """
@@ -226,10 +228,7 @@ class SelfReflectionAndDiscoveryEngine:
                 
                 # Generate proactive message for discoveries worth sharing
                 if self.proactive_engine and self._should_share_pattern(pattern):
-                    await self.proactive_engine.generate_proactive_message_from_pattern(
-                        user_id=user_id,
-                        pattern=pattern
-                    )
+                    await self._submit_proactive_message(user_id, pattern)
             
             logger.info(f"Stored {len(discovered_patterns)} new discovery patterns for user {user_id} of type '{discovery_type}'.")
 
@@ -249,12 +248,16 @@ class SelfReflectionAndDiscoveryEngine:
 
         except LLMServiceException as e:
             logger.error(f"Discovery failed for user {user_id} (type: {discovery_type}) due to LLM error: {e.detail}", exc_info=True)
+            raise
         except json.JSONDecodeError as e:
             logger.error(f"Discovery failed for user {user_id} (type: {discovery_type}): LLM response was not valid JSON. Error: {e}. Raw: {llm_response_str[:500]}...", exc_info=True)
+            raise
         except APIException as e:
             logger.error(f"Discovery failed for user {user_id} (type: {discovery_type}) due to MemoryService error: {e.detail}", exc_info=True)
+            raise
         except Exception as e:
             logger.critical(f"Unexpected error during discovery for user {user_id} (type: {discovery_type}): {e}", exc_info=True)
+            raise
 
     @staticmethod
     def _is_inquiry_pattern(pattern: DiscoveredPattern) -> bool:
@@ -319,3 +322,33 @@ class SelfReflectionAndDiscoveryEngine:
             return False
         
         return False
+
+    async def _submit_proactive_message(
+        self, user_id: UUID, pattern: DiscoveredPattern
+    ) -> None:
+        """Proactive generation is an independently governed, opt-in task."""
+        if not self.autonomous_work_governor:
+            await self.proactive_engine.generate_proactive_message_from_pattern(
+                user_id=user_id, pattern=pattern
+            )
+            return
+        try:
+            priority = max(0.0, min(1.0, float((pattern.metadata or {}).get("salience", 0.5))))
+        except (TypeError, ValueError):
+            priority = 0.5
+        request = AutonomousTaskRequest(
+            user_id=user_id,
+            task_type=AutonomousTaskType.PROACTIVE_ENGAGEMENT,
+            trigger_reason=f"shareable {pattern.pattern_type} pattern",
+            payload={"pattern": pattern.model_dump(mode="json")},
+            signals={"pattern_type": pattern.pattern_type},
+            deduplication_key=f"proactive:{user_id}:{pattern.pattern_id}",
+            priority=priority,
+        )
+
+        async def execute(_request):
+            return await self.proactive_engine.generate_proactive_message_from_pattern(
+                user_id=user_id, pattern=pattern
+            )
+
+        await self.autonomous_work_governor.submit(request, executor=execute)

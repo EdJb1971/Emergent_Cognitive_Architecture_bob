@@ -81,6 +81,8 @@ class Settings(BaseSettings):
     CHROMA_DB_PATH: str = "./chroma_db"
     CHROMA_COLLECTION_CYCLES: str = "cognitive_cycles"
     CHROMA_COLLECTION_PATTERNS: str = "discovered_patterns"
+    CHROMA_COLLECTION_EPISODIC: str = "episodic_memories_v2"
+    CHROMA_COLLECTION_SEMANTIC: str = "semantic_memories_v2"
 
     # Security Settings
     SECRET_KEY: str = Field(..., env="SECRET_KEY")
@@ -107,6 +109,45 @@ class Settings(BaseSettings):
         30.0,
         gt=0.0,
         env="SALIENCE_RECENCY_HALF_LIFE_DAYS",
+    )
+
+    # Governed sleep/consolidation. No scheduler task exists unless explicitly enabled.
+    SLEEP_CYCLE_ENABLED: bool = Field(False, env="SLEEP_CYCLE_ENABLED")
+    SLEEP_IDLE_MINUTES: float = Field(30.0, ge=0.0, env="SLEEP_IDLE_MINUTES")
+    SLEEP_CHECK_INTERVAL_SECONDS: float = Field(
+        60.0,
+        gt=0.0,
+        env="SLEEP_CHECK_INTERVAL_SECONDS",
+    )
+    SLEEP_COOLDOWN_MINUTES: float = Field(360.0, ge=0.0, env="SLEEP_COOLDOWN_MINUTES")
+    SLEEP_MAX_CYCLES: int = Field(20, ge=1, le=100, env="SLEEP_MAX_CYCLES")
+    SLEEP_REQUIRE_LOCAL_PROVIDER: bool = Field(True, env="SLEEP_REQUIRE_LOCAL_PROVIDER")
+    SLEEP_LEDGER_DB_PATH: str = Field(
+        "./chroma_db/sleep_cycle.sqlite3",
+        env="SLEEP_LEDGER_DB_PATH",
+    )
+
+    # Unified executive-control plane. Essential memory housekeeping remains on
+    # by default; initiative-producing categories require an operator opt-in.
+    AUTONOMOUS_WORK_MASTER_ENABLED: bool = Field(True, env="AUTONOMOUS_WORK_MASTER_ENABLED")
+    AUTONOMOUS_WORK_DB_PATH: str = Field(
+        "./chroma_db/autonomous_work.sqlite3", env="AUTONOMOUS_WORK_DB_PATH"
+    )
+    AUTONOMOUS_WORK_MAX_CONCURRENT: int = Field(
+        1, ge=1, le=8, env="AUTONOMOUS_WORK_MAX_CONCURRENT"
+    )
+    AUTONOMOUS_REFLECTION_ENABLED: bool = Field(False, env="AUTONOMOUS_REFLECTION_ENABLED")
+    AUTONOMOUS_DISCOVERY_ENABLED: bool = Field(False, env="AUTONOMOUS_DISCOVERY_ENABLED")
+    AUTONOMOUS_CURIOSITY_ENABLED: bool = Field(False, env="AUTONOMOUS_CURIOSITY_ENABLED")
+    AUTONOMOUS_SELF_ASSESSMENT_ENABLED: bool = Field(False, env="AUTONOMOUS_SELF_ASSESSMENT_ENABLED")
+    AUTONOMOUS_PROACTIVE_ENABLED: bool = Field(False, env="AUTONOMOUS_PROACTIVE_ENABLED")
+    AUTONOMOUS_SUMMARY_ENABLED: bool = Field(True, env="AUTONOMOUS_SUMMARY_ENABLED")
+    AUTONOMOUS_STM_FLUSH_ENABLED: bool = Field(True, env="AUTONOMOUS_STM_FLUSH_ENABLED")
+    AUTONOMOUS_DEFAULT_TIMEOUT_SECONDS: float = Field(
+        300.0, gt=0.0, env="AUTONOMOUS_DEFAULT_TIMEOUT_SECONDS"
+    )
+    AUTONOMOUS_DEFAULT_MAX_RETRIES: int = Field(
+        1, ge=0, le=5, env="AUTONOMOUS_DEFAULT_MAX_RETRIES"
     )
 
 @lru_cache

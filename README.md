@@ -134,6 +134,8 @@ npm run dev
 
 Vite binds to `127.0.0.1:3000` and proxies `/api`, `/chat`, and `/ws` to the local FastAPI server. The proxy reads `API_KEY` from the repository `.env` and injects it server-side, so normal local development does not compile the key into browser JavaScript. Use `npm run build` for the type-checked production build and `npm run preview` for a localhost-only preview.
 
+Open the control room with **Ctrl+K** and select **Autonomy** to pause/resume all autonomous work, toggle each cognitive category, inspect its operating limits, cancel/retry tasks, and verify the immutable executive ledger. UI changes persist across restarts. Sleep can be started or stopped from this view without restarting the backend.
+
 ### Configuration & Feature Flags
 
 | Flag | Location | Purpose |
@@ -144,6 +146,16 @@ Vite binds to `127.0.0.1:3000` and proxies `/api`, `/chat`, and `/ws` to the loc
 | `SALIENCE_NETWORK_SHADOW_MODE` | `.env` | Record rankings without exposing priority hints to synthesis |
 | `SALIENCE_NETWORK_TOP_K` | `.env` | Bound the number of advisory priority hints (default: 3) |
 | `SALIENCE_RECENCY_HALF_LIFE_DAYS` | `.env` | Configure temporal decay in salience scoring (default: 30) |
+| `SLEEP_CYCLE_ENABLED` | `.env` | Start the single-owner idle consolidation scheduler (default: false) |
+| `SLEEP_IDLE_MINUTES` | `.env` | Required inactivity before sleep work may begin (default: 30) |
+| `SLEEP_COOLDOWN_MINUTES` | `.env` | Minimum delay between successful sleep jobs (default: 360) |
+| `SLEEP_REQUIRE_LOCAL_PROVIDER` | `.env` | Refuse automatic sleep unless the configured provider stack is local |
+| `AUTONOMOUS_WORK_MASTER_ENABLED` | `.env` | Master admission gate; UI state persists after the first operator change |
+| `AUTONOMOUS_WORK_MAX_CONCURRENT` | `.env` | Global autonomous execution capacity (default: 1) |
+| `AUTONOMOUS_{REFLECTION,DISCOVERY,CURIOSITY,SELF_ASSESSMENT,PROACTIVE}_ENABLED` | `.env` | Initial initiative-category posture (all default: false) |
+| `AUTONOMOUS_{SUMMARY,STM_FLUSH}_ENABLED` | `.env` | Initial memory-housekeeping posture (both default: true) |
+| `AUTONOMOUS_DEFAULT_TIMEOUT_SECONDS` | `.env` | Hard deadline per execution attempt (default: 300) |
+| `AUTONOMOUS_DEFAULT_MAX_RETRIES` | `.env` | Bounded automatic retry budget (default: 1) |
 | `STM_TOKEN_BUDGET` | `.env` | Short-term memory token limit (default: 25000) |
 | `CONSOLIDATION_INTERVAL_MINUTES` | `.env` | Memory consolidation frequency (default: 30) |
 

@@ -45,6 +45,14 @@ from src.services.research_calibration_ledger import ResearchCalibrationLedger
 from src.services.inquiry_review_service import InquiryReviewService
 from src.services.research_runtime_control import ResearchRuntimeControl
 from src.api.research_review import router as research_review_router
+from src.api.autonomous_work import router as autonomous_work_router
+from src.models.autonomous_work_models import (
+    AutonomousProviderPolicy,
+    AutonomousTaskPolicy,
+    AutonomousTaskType,
+)
+from src.services.autonomous_work_governor import AutonomousWorkGovernor
+from src.services.autonomous_work_store import AutonomousWorkStore
 from src.services.audio_input_processor import AudioInputProcessor
 from src.providers import ModelExecutionScheduler, OllamaProbe
 from src.providers.factory import build_active_provider, build_synthesis_provider, enforce_local_only
@@ -196,7 +204,9 @@ async def lifespan(app: FastAPI):
         from src.services.memory_consolidation_service import MemoryConsolidationService
         from src.services.theory_of_mind_service import TheoryOfMindService
         
-        app.state.autobiographical_memory_system = AutobiographicalMemorySystem()
+        app.state.autobiographical_memory_system = AutobiographicalMemorySystem(
+            embedding_service=app.state.llm_service
+        )
         await app.state.autobiographical_memory_system.connect(client=app.state.memory_service.client)
         logger.info("AutobiographicalMemorySystem initialized and connected to ChromaDB.")
         
@@ -209,8 +219,47 @@ async def lifespan(app: FastAPI):
         )
         logger.info("TheoryOfMindService initialized successfully.")
 
-        # Initialize Background Task Queue
-        app.state.background_task_queue = BackgroundTaskQueue()
+        # Initialize the single executive-control plane before any background producer.
+        app.state.autonomous_work_store = AutonomousWorkStore(settings.AUTONOMOUS_WORK_DB_PATH)
+        await app.state.autonomous_work_store.connect()
+        default_timeout = settings.AUTONOMOUS_DEFAULT_TIMEOUT_SECONDS
+        default_retries = settings.AUTONOMOUS_DEFAULT_MAX_RETRIES
+        policy_specs = {
+            AutonomousTaskType.SLEEP: (settings.SLEEP_CYCLE_ENABLED, settings.SLEEP_COOLDOWN_MINUTES * 60.0, 2, True, "Idle memory consolidation"),
+            AutonomousTaskType.REFLECTION: (settings.AUTONOMOUS_REFLECTION_ENABLED, 600.0, 6, True, "Metacognitive review of completed cycles"),
+            AutonomousTaskType.DISCOVERY: (settings.AUTONOMOUS_DISCOVERY_ENABLED, 900.0, 4, True, "Knowledge-gap discovery"),
+            AutonomousTaskType.CURIOSITY: (settings.AUTONOMOUS_CURIOSITY_ENABLED, 1200.0, 3, True, "Exploratory local inquiry"),
+            AutonomousTaskType.SELF_ASSESSMENT: (settings.AUTONOMOUS_SELF_ASSESSMENT_ENABLED, 3600.0, 2, True, "System performance self-assessment"),
+            AutonomousTaskType.PROACTIVE_ENGAGEMENT: (settings.AUTONOMOUS_PROACTIVE_ENABLED, 21600.0, 2, True, "Opt-in user outreach"),
+            AutonomousTaskType.SUMMARY_UPDATE: (settings.AUTONOMOUS_SUMMARY_ENABLED, 0.0, 120, False, "Per-cycle conversation summary"),
+            AutonomousTaskType.STM_FLUSH: (settings.AUTONOMOUS_STM_FLUSH_ENABLED, 0.0, 30, False, "Token-pressure memory flush"),
+        }
+        policies = {
+            task_type: AutonomousTaskPolicy(
+                task_type=task_type,
+                enabled=enabled,
+                cooldown_seconds=cooldown,
+                timeout_seconds=default_timeout,
+                max_retries=default_retries,
+                max_per_hour=max_per_hour,
+                provider_policy=AutonomousProviderPolicy.LOCAL_ONLY,
+                cancel_on_user_activity=cancel_on_activity,
+                description=description,
+            )
+            for task_type, (enabled, cooldown, max_per_hour, cancel_on_activity, description)
+            in policy_specs.items()
+        }
+        app.state.autonomous_work_governor = AutonomousWorkGovernor(
+            store=app.state.autonomous_work_store,
+            policies=policies,
+            master_enabled=settings.AUTONOMOUS_WORK_MASTER_ENABLED,
+            max_concurrent_global=settings.AUTONOMOUS_WORK_MAX_CONCURRENT,
+            provider_is_local=lambda: bool(app.state.llm_service.capabilities.is_local),
+        )
+        await app.state.autonomous_work_governor.start(SYSTEM_USER_ID)
+
+        # Compatibility adapter: all production paths below enter the governor.
+        app.state.background_task_queue = BackgroundTaskQueue(app.state.autonomous_work_governor)
         logger.info("BackgroundTaskQueue initialized successfully.")
 
         # Route summary and STM flush work off the request path.
@@ -254,6 +303,9 @@ async def lifespan(app: FastAPI):
         await app.state.inquiry_candidate_store.connect()
         app.state.research_calibration_ledger = ResearchCalibrationLedger(settings.INQUIRY_DB_PATH)
         await app.state.research_calibration_ledger.connect()
+        from src.services.sleep_cycle_ledger import SleepCycleLedger
+        app.state.sleep_cycle_ledger = SleepCycleLedger(settings.SLEEP_LEDGER_DB_PATH)
+        await app.state.sleep_cycle_ledger.connect()
         app.state.inquiry_candidate_service = InquiryCandidateService(
             store=app.state.inquiry_candidate_store,
             drive=app.state.cognitive_research_drive,
@@ -275,6 +327,8 @@ async def lifespan(app: FastAPI):
             proactive_engine=app.state.proactive_engine,
             inquiry_candidate_service=app.state.inquiry_candidate_service,
             salience_network=app.state.salience_network,
+            audit_ledger=app.state.sleep_cycle_ledger,
+            consolidation_interval_minutes=settings.SLEEP_COOLDOWN_MINUTES,
         )
         logger.info("MemoryConsolidationService initialized with proactive engagement.")
 
@@ -359,6 +413,9 @@ async def lifespan(app: FastAPI):
             local_only=settings.LOCAL_ONLY_MODE,
             low_confidence_threshold=settings.RESEARCH_LOW_CONFIDENCE_THRESHOLD,
         )
+        app.state.self_reflection_discovery_engine.autonomous_work_governor = (
+            app.state.autonomous_work_governor
+        )
         app.state.research_service = ResearchService(
             policy=app.state.escalation_policy,
             provider=research_provider,
@@ -413,7 +470,8 @@ async def lifespan(app: FastAPI):
             self_model_service=app.state.self_model_service,
             working_memory_buffer=app.state.working_memory_buffer,
             theory_of_mind_service=app.state.theory_of_mind_service,
-            synthesis_provider=app.state.synthesis_provider
+            synthesis_provider=app.state.synthesis_provider,
+            autobiographical_system=app.state.autobiographical_memory_system,
         )
         logger.info(
             "CognitiveBrain initialized; final synthesis on %s (%s).",
@@ -457,6 +515,103 @@ async def lifespan(app: FastAPI):
         )
         logger.info("OrchestrationService (Central Agent) initialized successfully with Phase 1 & 2 Brain Architecture services.")
 
+        from src.services.sleep_cycle_coordinator import SleepCycleCoordinator
+        app.state.sleep_cycle_coordinator = SleepCycleCoordinator(
+            consolidation_service=app.state.memory_consolidation_service,
+            ledger=app.state.sleep_cycle_ledger,
+            user_ids=(SYSTEM_USER_ID,),
+            enabled=app.state.autonomous_work_governor.policies[AutonomousTaskType.SLEEP].enabled,
+            idle_seconds=settings.SLEEP_IDLE_MINUTES * 60.0,
+            check_interval_seconds=settings.SLEEP_CHECK_INTERVAL_SECONDS,
+            max_cycles=settings.SLEEP_MAX_CYCLES,
+            require_local_provider=settings.SLEEP_REQUIRE_LOCAL_PROVIDER,
+            metrics_service=app.state.metrics_service,
+            autonomous_governor=app.state.autonomous_work_governor,
+        )
+        app.state.orchestration_service.sleep_cycle_coordinator = app.state.sleep_cycle_coordinator
+        app.state.orchestration_service.autonomous_work_governor = app.state.autonomous_work_governor
+
+        async def reflection_handler(task):
+            return await app.state.self_reflection_discovery_engine.execute_reflection(
+                task.user_id, int(task.signals.get("num_cycles", 10))
+            )
+
+        async def discovery_handler(task):
+            discovery_type = str(task.signals.get("discovery_type", "knowledge_gap"))
+            return await app.state.self_reflection_discovery_engine.execute_discovery(
+                task.user_id, discovery_type, str(task.signals)
+            )
+
+        async def curiosity_handler(task):
+            return await app.state.self_reflection_discovery_engine.execute_discovery(
+                task.user_id, "curiosity_exploration", str(task.signals)
+            )
+
+        async def self_assessment_handler(task):
+            return await app.state.self_reflection_discovery_engine.execute_reflection(
+                task.user_id, int(task.signals.get("num_cycles", 20))
+            )
+
+        async def proactive_handler(task):
+            pattern = DiscoveredPattern.model_validate(task.payload["pattern"])
+            return await app.state.proactive_engine.generate_proactive_message_from_pattern(
+                task.user_id, pattern
+            )
+
+        async def summary_handler(task):
+            cycle = await app.state.memory_service.get_cycle_by_id(
+                task.user_id, UUID(str(task.payload["cycle_id"]))
+            )
+            if cycle is None:
+                raise RuntimeError("summary source cycle is unavailable")
+            return await app.state.memory_service._run_summary_update(cycle)
+
+        async def stm_flush_handler(task):
+            cycles = []
+            for cycle_id in task.payload.get("cycle_ids", []):
+                cycle = await app.state.memory_service.get_cycle_by_id(
+                    task.user_id, UUID(str(cycle_id))
+                )
+                if cycle is not None:
+                    cycles.append(cycle)
+            if not cycles:
+                raise RuntimeError("STM flush source cycles are unavailable")
+            return await app.state.memory_service.flush_to_ltm(task.user_id, cycles)
+
+        async def sleep_handler(task):
+            from uuid import uuid4
+            return await app.state.sleep_cycle_coordinator._execute_pipeline(
+                task.user_id, float(task.signals.get("idle_seconds", 0.0)), uuid4()
+            )
+
+        handlers = {
+            AutonomousTaskType.REFLECTION: reflection_handler,
+            AutonomousTaskType.DISCOVERY: discovery_handler,
+            AutonomousTaskType.CURIOSITY: curiosity_handler,
+            AutonomousTaskType.SELF_ASSESSMENT: self_assessment_handler,
+            AutonomousTaskType.PROACTIVE_ENGAGEMENT: proactive_handler,
+            AutonomousTaskType.SUMMARY_UPDATE: summary_handler,
+            AutonomousTaskType.STM_FLUSH: stm_flush_handler,
+            AutonomousTaskType.SLEEP: sleep_handler,
+        }
+        for task_type, handler in handlers.items():
+            app.state.autonomous_work_governor.register_handler(task_type, handler)
+
+        async def apply_autonomous_runtime(runtime):
+            await app.state.sleep_cycle_coordinator.set_enabled(
+                runtime.policies[AutonomousTaskType.SLEEP].enabled
+                and runtime.master_enabled
+            )
+
+        app.state.autonomous_work_governor.add_runtime_callback(apply_autonomous_runtime)
+        await app.state.sleep_cycle_coordinator.start()
+        logger.info(
+            "SleepCycleCoordinator initialized (enabled=%s, idle_minutes=%s, local_only=%s).",
+            app.state.sleep_cycle_coordinator.enabled,
+            settings.SLEEP_IDLE_MINUTES,
+            settings.SLEEP_REQUIRE_LOCAL_PROVIDER,
+        )
+
         # Wire OrchestrationService into BackgroundTaskQueue for task routing
         try:
             app.state.background_task_queue.set_orchestration_service(app.state.orchestration_service)
@@ -476,16 +631,24 @@ async def lifespan(app: FastAPI):
 
     logger.info(f"Shutting down {settings.APP_NAME}...")
     # Perform any cleanup here if necessary
+    if getattr(app.state, "sleep_cycle_coordinator", None):
+        await app.state.sleep_cycle_coordinator.shutdown()
+    if getattr(app.state, "background_task_queue", None):
+        await app.state.background_task_queue.shutdown()
+    if getattr(app.state, "autonomous_work_governor", None):
+        await app.state.autonomous_work_governor.shutdown(SYSTEM_USER_ID)
     if getattr(app.state, "memory_service", None):
         await app.state.memory_service.close()
     if getattr(app.state, "inquiry_candidate_store", None):
         await app.state.inquiry_candidate_store.close()
     if getattr(app.state, "research_calibration_ledger", None):
         await app.state.research_calibration_ledger.close()
+    if getattr(app.state, "sleep_cycle_ledger", None):
+        await app.state.sleep_cycle_ledger.close()
     if getattr(app.state, "research_service", None):
         await app.state.research_service.close()
-    if getattr(app.state, "background_task_queue", None):
-        await app.state.background_task_queue.shutdown()
+    if getattr(app.state, "autonomous_work_store", None):
+        await app.state.autonomous_work_store.close()
 
     logger.info("Application shutdown complete.")
 
@@ -496,6 +659,7 @@ app = FastAPI(
     lifespan=lifespan
 )
 app.include_router(research_review_router)
+app.include_router(autonomous_work_router)
 
 # For development, allow all origins. For production, this should be more restrictive.
 app.add_middleware(

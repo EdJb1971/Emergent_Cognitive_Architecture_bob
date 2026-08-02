@@ -84,6 +84,8 @@ class WorkingMemoryBuffer:
             analysis = memory.analysis
             self.context.recalled_memories = analysis.get("retrieved_context", [])
             self.context.memory_confidence = analysis.get("relevance_score", 0.0)
+            advisory = analysis.get("salience_advisory")
+            self.context.salience_advisory = advisory if isinstance(advisory, dict) else None
             
             # Extract entities from recalled memories for attention focus
             if self.context.memory_confidence > 0.6:
@@ -138,6 +140,27 @@ class WorkingMemoryBuffer:
             if self.context.memory_confidence > 0.7:
                 context_str += " (HIGH CONFIDENCE)"
             context_str += "\n"
+
+        advisory = self.context.salience_advisory
+        if (
+            isinstance(advisory, dict)
+            and advisory.get("enabled") is True
+            and advisory.get("shadow_mode") is False
+        ):
+            hints = []
+            for candidate in advisory.get("candidates", [])[: advisory.get("top_k", 0)]:
+                if not isinstance(candidate, dict):
+                    continue
+                reasons = ", ".join(candidate.get("reasons", [])[:3]) or "balanced signal"
+                hints.append(
+                    f"baseline item #{candidate.get('baseline_rank', '?')} "
+                    f"(score {candidate.get('salience_score', 0.0):.2f}: {reasons})"
+                )
+            if hints:
+                context_str += (
+                    "Memory Priority Advisory: " + "; ".join(hints) + "\n"
+                    "Advisory rule: consider every recalled memory; ranking is not factual confidence.\n"
+                )
         
         if self.context.multimodal:
             context_str += "Multimodal Input: Present\n"

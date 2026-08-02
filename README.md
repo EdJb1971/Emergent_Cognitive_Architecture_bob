@@ -140,6 +140,10 @@ Vite binds to `127.0.0.1:3000` and proxies `/api`, `/chat`, and `/ws` to the loc
 |------|----------|---------|
 | `ATTENTION_CONTROLLER_ENABLED` | `.env` | Enable dynamic attention routing |
 | `ATTENTION_CONTROLLER_SHADOW_MODE` | `.env` | Log decisions without affecting routing |
+| `SALIENCE_NETWORK_ENABLED` | `.env` | Compute explainable post-retrieval memory rankings |
+| `SALIENCE_NETWORK_SHADOW_MODE` | `.env` | Record rankings without exposing priority hints to synthesis |
+| `SALIENCE_NETWORK_TOP_K` | `.env` | Bound the number of advisory priority hints (default: 3) |
+| `SALIENCE_RECENCY_HALF_LIFE_DAYS` | `.env` | Configure temporal decay in salience scoring (default: 30) |
 | `STM_TOKEN_BUDGET` | `.env` | Short-term memory token limit (default: 25000) |
 | `CONSOLIDATION_INTERVAL_MINUTES` | `.env` | Memory consolidation frequency (default: 30) |
 

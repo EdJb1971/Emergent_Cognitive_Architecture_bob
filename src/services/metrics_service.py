@@ -39,6 +39,7 @@ class MetricType(Enum):
     RL_STRATEGY = "rl_strategy"
     META_COGNITIVE = "meta_cognitive"
     ATTENTION_DIRECTIVE = "attention_directive"
+    SALIENCE_ASSESSMENT = "salience_assessment"
 
 
 @dataclass
@@ -345,6 +346,14 @@ class MetricsService:
         elif event.type == MetricType.ATTENTION_DIRECTIVE:
             applied = event.data.get("applied", False)
             mode_key = "attention_directive_applied" if applied else "attention_directive_shadow"
+            self.counters[mode_key] += 1
+
+        elif event.type == MetricType.SALIENCE_ASSESSMENT:
+            mode_key = (
+                "salience_advisory_active"
+                if event.data.get("advisory_exposed", False)
+                else "salience_advisory_shadow"
+            )
             self.counters[mode_key] += 1
 
     def _cleanup_old_events(self):

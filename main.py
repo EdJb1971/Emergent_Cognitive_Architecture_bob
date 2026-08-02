@@ -141,6 +141,7 @@ async def lifespan(app: FastAPI):
         from src.services.self_model_service import SelfModelService
         from src.services.working_memory_buffer import WorkingMemoryBuffer
         from src.services.emotional_salience_encoder import EmotionalSalienceEncoder
+        from src.services.salience_network import SalienceNetwork
         
         app.state.self_model_service = SelfModelService()
         await app.state.self_model_service.connect(client=app.state.memory_service.client)
@@ -151,6 +152,19 @@ async def lifespan(app: FastAPI):
         
         app.state.emotional_salience_encoder = EmotionalSalienceEncoder()
         logger.info("EmotionalSalienceEncoder initialized successfully.")
+
+        app.state.salience_network = SalienceNetwork(
+            enabled=settings.SALIENCE_NETWORK_ENABLED,
+            shadow_mode=settings.SALIENCE_NETWORK_SHADOW_MODE,
+            top_k=settings.SALIENCE_NETWORK_TOP_K,
+            recency_half_life_days=settings.SALIENCE_RECENCY_HALF_LIFE_DAYS,
+        )
+        logger.info(
+            "SalienceNetwork initialized (enabled=%s, shadow_mode=%s, top_k=%s).",
+            settings.SALIENCE_NETWORK_ENABLED,
+            settings.SALIENCE_NETWORK_SHADOW_MODE,
+            settings.SALIENCE_NETWORK_TOP_K,
+        )
 
         # Initialize Brain Architecture Services (Phase 2)
         from src.services.thalamus_gateway import ThalamusGateway
@@ -260,6 +274,7 @@ async def lifespan(app: FastAPI):
             llm_service=app.state.llm_service,
             proactive_engine=app.state.proactive_engine,
             inquiry_candidate_service=app.state.inquiry_candidate_service,
+            salience_network=app.state.salience_network,
         )
         logger.info("MemoryConsolidationService initialized with proactive engagement.")
 
@@ -289,6 +304,7 @@ async def lifespan(app: FastAPI):
         app.state.memory_agent = MemoryAgent(
             llm_service=app.state.llm_service,
             memory_service=app.state.memory_service,
+            salience_network=app.state.salience_network,
         )
         logger.info("MemoryAgent initialized successfully.")
 
@@ -437,6 +453,7 @@ async def lifespan(app: FastAPI):
             inquiry_candidate_service=app.state.inquiry_candidate_service,
             waking_inquiry_service=app.state.waking_inquiry_service,
             research_calibration_ledger=app.state.research_calibration_ledger,
+            emotional_salience_encoder=app.state.emotional_salience_encoder,
         )
         logger.info("OrchestrationService (Central Agent) initialized successfully with Phase 1 & 2 Brain Architecture services.")
 

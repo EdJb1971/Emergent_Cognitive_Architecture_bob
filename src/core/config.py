@@ -101,6 +101,13 @@ class Settings(BaseSettings):
     ATTENTION_CONTROLLER_ENABLED: bool = Field(False, env="ATTENTION_CONTROLLER_ENABLED")
     ATTENTION_CONTROLLER_SHADOW_MODE: bool = Field(True, env="ATTENTION_CONTROLLER_SHADOW_MODE")
     SALIENCE_NETWORK_ENABLED: bool = Field(False, env="SALIENCE_NETWORK_ENABLED")
+    SALIENCE_NETWORK_SHADOW_MODE: bool = Field(True, env="SALIENCE_NETWORK_SHADOW_MODE")
+    SALIENCE_NETWORK_TOP_K: int = Field(3, ge=1, le=20, env="SALIENCE_NETWORK_TOP_K")
+    SALIENCE_RECENCY_HALF_LIFE_DAYS: float = Field(
+        30.0,
+        gt=0.0,
+        env="SALIENCE_RECENCY_HALF_LIFE_DAYS",
+    )
 
 @lru_cache
 def get_settings():

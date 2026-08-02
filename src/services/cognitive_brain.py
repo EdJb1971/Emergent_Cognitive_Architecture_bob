@@ -181,7 +181,12 @@ Agent Analyses:
             if agent_output.confidence > 0.0:
                 context_for_llm += f"Agent {agent_output.agent_id} Analysis (Confidence: {agent_output.confidence:.2f}, Priority: {agent_output.priority}):\n"
                 # Truncate large agent outputs to prevent context explosion
-                agent_json = json.dumps(agent_output.analysis, indent=2, cls=UUIDEncoder)
+                analysis_for_prompt = dict(agent_output.analysis)
+                # The complete ranking is retained in cycle metadata. Working Memory
+                # emits only compact hints in active advisory mode, and emits nothing
+                # in shadow mode, so the control group remains behaviorally clean.
+                analysis_for_prompt.pop("salience_advisory", None)
+                agent_json = json.dumps(analysis_for_prompt, indent=2, cls=UUIDEncoder)
                 if len(agent_json) > 10000:  # ~2.5k tokens per agent max
                     logger.warning(f"Agent {agent_output.agent_id} output too large ({len(agent_json)} chars), truncating")
                     agent_json = agent_json[:10000] + "\n... [analysis truncated for brevity]"

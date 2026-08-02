@@ -24,6 +24,7 @@ from src.services.autobiographical_memory_system import AutobiographicalMemorySy
 from src.services.llm_integration_service import LLMIntegrationService
 from src.models.research_models import CognitiveResearchSignals, InquirySourceType
 from src.services.inquiry_candidate_service import InquiryCandidateService
+from src.services.salience_network import SalienceNetwork
 
 logger = logging.getLogger(__name__)
 
@@ -41,12 +42,14 @@ class MemoryConsolidationService:
         llm_service: LLMIntegrationService,
         proactive_engine: Optional[Any] = None,
         inquiry_candidate_service: Optional[InquiryCandidateService] = None,
+        salience_network: Optional[SalienceNetwork] = None,
     ):
         self.memory_service = memory_service
         self.autobiographical_system = autobiographical_system
         self.llm_service = llm_service
         self.proactive_engine = proactive_engine  # Optional ProactiveEngagementEngine
         self.inquiry_candidate_service = inquiry_candidate_service
+        self.salience_network = salience_network
         self.consolidation_jobs: Dict[str, MemoryConsolidationJob] = {}
         self.consolidation_interval_minutes = 30  # Run every 30 minutes
         self.last_consolidation: Dict[str, datetime] = {}  # user_id -> last consolidation time
@@ -91,8 +94,11 @@ class MemoryConsolidationService:
         job_id = str(uuid4())
         
         # If no specific cycles, get recent high-priority cycles
+        salience_advisory = None
         if not cycle_ids:
-            cycle_ids = await self._get_consolidation_candidates(user_id)
+            cycle_ids, salience_advisory = (
+                await self._get_consolidation_candidates_with_advisory(user_id)
+            )
         
         job = MemoryConsolidationJob(
             job_id=job_id,
@@ -100,7 +106,8 @@ class MemoryConsolidationService:
             cycle_ids_to_process=cycle_ids,
             consolidation_type=consolidation_type,
             priority=priority,
-            status="pending"
+            status="pending",
+            salience_advisory=salience_advisory,
         )
         
         self.consolidation_jobs[job_id] = job
@@ -113,6 +120,18 @@ class MemoryConsolidationService:
         Get cycle IDs that are candidates for consolidation.
         Prioritizes high consolidation_priority cycles from recent history.
         """
+        cycle_ids, _ = await self._get_consolidation_candidates_with_advisory(
+            user_id,
+            limit=limit,
+        )
+        return cycle_ids
+
+    async def _get_consolidation_candidates_with_advisory(
+        self,
+        user_id: str,
+        limit: int = 20,
+    ) -> tuple[List[str], Optional[Dict[str, Any]]]:
+        """Return the unchanged baseline selection plus an optional replay ranking."""
         try:
             # Get recent cycles with high consolidation priority
             from uuid import UUID
@@ -130,12 +149,22 @@ class MemoryConsolidationService:
                 if priority > 0.6:  # Only consolidate medium-high priority memories
                     candidates.append(str(cycle.cycle_id))
             
+            salience_advisory = None
+            if self.salience_network and self.salience_network.enabled:
+                assessment = self.salience_network.assess_memories(
+                    cycles,
+                    goal_terms=("memory replay", "learning", "unresolved pattern"),
+                    top_k=limit,
+                )
+                salience_advisory = assessment.model_dump(mode="json")
+                salience_advisory["baseline_selected_ids"] = list(candidates)
+
             logger.debug(f"Found {len(candidates)} consolidation candidates for user {user_id}")
-            return candidates
+            return candidates, salience_advisory
             
         except Exception as e:
             logger.error(f"Error getting consolidation candidates: {e}")
-            return []
+            return [], None
     
     async def execute_consolidation_job(self, job_id: str) -> MemoryConsolidationJob:
         """

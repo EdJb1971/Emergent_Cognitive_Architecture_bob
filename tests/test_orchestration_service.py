@@ -16,6 +16,7 @@ from src.services.research_service import DisabledResearchProvider, ResearchServ
 from src.services.cognitive_research_drive import CognitiveResearchDrive
 from src.services.inquiry_candidate_service import InquiryCandidateService
 from src.services.research_calibration_ledger import ResearchCalibrationLedger
+from src.services.emotional_salience_encoder import EmotionalSalienceEncoder
 from src.agents.perception_agent import PerceptionAgent
 from src.agents.emotional_agent import EmotionalAgent
 from src.agents.memory_agent import MemoryAgent
@@ -172,6 +173,46 @@ async def test_orchestrate_cycle_memory_service_failure(orchestration_service, m
 
     assert cognitive_cycle.final_response == "Mock final response"
     mock_memory_service.upsert_cycle.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_orchestration_persists_salience_advisory_and_emotional_encoding(
+    orchestration_service,
+    mock_agents,
+):
+    memory_id = str(uuid4())
+    mock_agents["memory_agent"].process_input.return_value = AgentOutput(
+        agent_id="memory_agent",
+        analysis={
+            "retrieved_context": [{"cycle_id": memory_id, "user_input": "prior context"}],
+            "relevance_score": 0.8,
+            "source_memory_ids": [memory_id],
+            "salience_advisory": {
+                "version": "salience-v1",
+                "enabled": True,
+                "shadow_mode": True,
+                "candidate_count": 1,
+                "top_k": 1,
+                "pruning_applied": False,
+                "candidates": [],
+            },
+        },
+        confidence=0.9,
+        priority=8,
+    )
+    orchestration_service.emotional_salience_encoder = EmotionalSalienceEncoder()
+
+    cycle = await orchestration_service.orchestrate_cycle(
+        UserRequest(
+            user_id=uuid4(),
+            session_id=uuid4(),
+            input_text="Do you remember how I feel about this?",
+        )
+    )
+
+    assert cycle.metadata["salience_advisory"]["version"] == "salience-v1"
+    assert cycle.metadata["salience_advisory"]["pruning_applied"] is False
+    assert 0.0 <= cycle.metadata["emotional_salience"]["salience_score"] <= 1.0
 
 
 @pytest.mark.asyncio

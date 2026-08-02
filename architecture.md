@@ -32,8 +32,8 @@ This document describes the Emergent Cognitive Architecture (ECA), a brain-inspi
 | Retrieval evaluation | Reproducible local baseline measured | `python -m src.tools.eval_retrieval --seeded --fixture tests/fixtures/memory_retrieval_seeded.json` embeds 25 synthetic records into an ephemeral, identity-stamped Chroma collection and evaluates 50 reviewed queries without reading or changing personal memory. `embeddinggemma:latest` measured recall, MRR, and NDCG of `1.000` at both k=1 and k=5 on August 2; a repeated run produced the same result and the seeded collection did not appear in the persistent database. The earlier mutable 12-query personal-database run remains a smoke result (`0.958`/`0.958`/`0.952` at k=5), not the canonical benchmark. Expected-fact labels are present for future application-level evaluation; current metrics cover direct Chroma ranking only. |
 | Application memory scoring | Repaired and live-verified | The primary collections use Chroma's default squared-L2 distance, but `MemoryService` previously applied a discontinuous cosine-style conversion: a closer `0.865` result scored `0.135` while a worse `1.088` result scored `0.479`. Metric-aware conversion now maps normalized L2 vectors onto cosine-comparable scores. A matched live query changed from zero Cognitive Brain memories and a failed clarification to three LTM memories and correct recall of Tom and Leeds. |
 | Research escalation | Complete guarded round trip, review surface, and runtime control plane; disabled/shadowed by default | `CognitiveResearchDrive` combines bounded uncertainty, conflict, novelty/prediction error, volatility, stakes, persistence, expected information gain, privacy/cost inhibition, hysteresis, and cooldown. `InquiryCandidateStore` durably de-duplicates waking/reflection/dream inquiries and tracks waking review, approval, success, and retryable failure. The operator UI and authenticated APIs list, inspect, approve, dismiss, and retry inquiries. `WakingInquiryService` can resolve locally, defer, require user approval, or cross both the cognitive and policy gates. `GeminiGroundedResearchProvider` uses Google Search grounding and accepts only URL-annotated claims; `ResearchService` independently validates IDs, provider identity, question-only context, URLs, source references, and bounds. Cognitive Brain receives only verified packets and emits deterministic source links. A database-enforced append-only, hash-chained ledger captures reviews, policy decisions, packets, source feedback, calibration labels, and runtime changes. Provider access, active control, and automatic non-explicit research are separately interlocked UI toggles; the final transition requires typed confirmation, and emergency stop disables all three. State is restored from the ledger after restart. Defaults remain provider-disabled, controller-shadowed, and explicit-approval-required. |
-| Salience network | Planned | There is a feature flag only; no `SalienceNetwork` implementation is present. |
-| Validation | Repaired baseline | The repository virtual environment runs `157 passed, 3 skipped` on August 2, 2026. The React production build passes TypeScript checking and compiles with Vite `8.2.0`, Node `v24.18.1`, and npm `11.16.0`; `npm audit` reports zero vulnerabilities. Desktop and responsive operator layouts were rendered against the live local API before the toolchain migration, and the migrated Vite runtime/proxy completed an authenticated live API smoke; a fresh interactive browser session was unavailable for the post-migration pass. The research-drive fixture has 20 reviewed synthetic cases and measures action accuracy `1.000`, escalation precision `1.000`, and escalation recall `1.000`. A guarded live Gemini smoke test returned 2 verified claims from 2 URL sources after 2 searches in `5567.7ms`. This is a deterministic regression and connectivity baseline, not proof of real-world calibration or biological equivalence. The three skipped root-level async tests are not collected by an async test plugin. |
+| Salience network | Implemented, default disabled/shadowed; advisory only | `SalienceNetwork` produces a deterministic alternative ranking after MemoryAgent retrieval from bounded query relevance, recency, emotional salience, novelty, goal alignment, and must-keep signals. It preserves the complete baseline order, records scores/contributions/reasons in cycle metadata and metrics, and can expose compact Working Memory hints only when enabled outside shadow mode. It never prunes a memory. Consolidation jobs retain the unchanged baseline selection plus a replay-order advisory. |
+| Validation | Repaired baseline | The repository virtual environment runs `163 passed, 3 skipped` on August 2, 2026. The React production build passes TypeScript checking and compiles with Vite `8.2.0`, Node `v24.18.1`, and npm `11.16.0`; `npm audit` reports zero vulnerabilities. Desktop and responsive operator layouts were rendered against the live local API before the toolchain migration, and the migrated Vite runtime/proxy completed an authenticated live API smoke; a fresh interactive browser session was unavailable for the post-migration pass. The research-drive fixture has 20 reviewed synthetic cases and measures action accuracy `1.000`, escalation precision `1.000`, and escalation recall `1.000`. A guarded live Gemini smoke test returned 2 verified claims from 2 URL sources after 2 searches in `5567.7ms`. This is a deterministic regression and connectivity baseline, not proof of real-world calibration or biological equivalence. The three skipped root-level async tests are not collected by an async test plugin. |
 
 The phase sections below retain the design intent. Treat statements about autonomous background execution, measured performance improvements, or real-time streaming as planned unless this status section explicitly marks them implemented.
 
@@ -1192,33 +1192,37 @@ performance_data = {
 
 **Configuration:** Controlled through environment flags `ATTENTION_CONTROLLER_ENABLED` / `ATTENTION_CONTROLLER_SHADOW_MODE`; directives are logged regardless, but routing is only altered when enabled and shadow mode is false.
 
-#### **SalienceNetwork (Phase 7 Preview)**
+#### **SalienceNetwork (Phase 7 Advisory Foundation)**
 
-**Purpose:** Planned insula/temporal-parietal junction-inspired layer that scores retrieved memories for situational relevance, emotional importance, and novelty, ensuring CognitiveBrain receives a concise, high-signal context bundle.
+**Purpose:** Implemented insula/amygdala/prefrontal-inspired layer that produces an explainable alternative ordering for retrieved memories. It is deliberately advisory-only: baseline candidates remain intact so ranking quality can be calibrated before any future pruning is considered.
 
 **Inputs:**
-- Raw retrieval results from `MemoryService` (STM, summaries, LTM embeddings)
-- Attention motifs emitted by AttentionController
-- Emotional salience scores from `emotional_salience_encoder`
-- Recent Procedural/RL feedback about over/under-inclusion of memories
+- Baseline `CognitiveCycle` results returned to `MemoryAgent`, including vector relevance scores
+- Recency with a configurable half-life
+- Persisted emotional-salience and novelty signals; contextual bindings provide bounded fallbacks
+- Query/goal term alignment
+- Explicit `must_keep`, `pinned`, `protected`, or preservation metadata
 
 **Outputs:**
-- `SalienceAnnotatedMemory` objects with normalized scores, rationale tags, and include/drop recommendations
-- Top-K memory set returned to Working Memory and CognitiveBrain
-- Salience metadata stored via `ContextualMemoryEncoder` for future consolidation weighting
+- A versioned `SalienceAssessment` containing the untouched baseline order, full recommended order, normalized factor scores, weighted contributions, reason tags, and top-K count
+- Full waking assessment stored in `CognitiveCycle.metadata["salience_advisory"]` and summarized by a `SALIENCE_ASSESSMENT` metric
+- Compact baseline-rank hints in Working Memory only when enabled with shadow mode off
+- A consolidation-job replay advisory alongside the unchanged baseline candidate selection
 
 **Data Flow:**
-1. MemoryService performs its normal retrieval and hands the candidate list plus metadata to SalienceNetwork.
-2. SalienceNetwork computes multi-factor scores (situational match, recency, emotional weight, novelty) and trims to a target count (default 3).
-3. Annotated memories flow back into Working Memory, which in turn informs Stage 2 agents and final synthesis.
-4. Salience decisions plus downstream outcomes are recorded so Procedural/RL services can correlate salience choices with success metrics.
+1. MemoryService performs normal STM/LTM retrieval and ranking without modification.
+2. MemoryAgent asks SalienceNetwork for an alternative ranking. Default weights are query relevance `0.38`, recency `0.15`, emotional salience `0.20`, novelty `0.10`, goal alignment `0.12`, and must-keep `0.05`; weights are normalized and every input is clamped to `[0,1]`.
+3. The complete advisory is retained for audit. CognitiveBrain removes that verbose object from raw agent JSON; Working Memory emits bounded hints only in active advisory mode.
+4. `must_keep` candidates receive a `0.90` score floor, but no candidate is removed in any mode.
+5. Newly completed cycles are now tagged by the previously instantiated but unwired `EmotionalSalienceEncoder`, making affective salience available to later recall and sleep scoring.
+6. Consolidation candidate discovery can record the same full assessment, but the current sleep service continues to process its original threshold-selected IDs.
 
-**Telemetry & Testing Plan:**
-- A/B harness comparing baseline retrieval vs. salience-pruned contexts, targeting reduced memory count without accuracy loss.
-- Regression checks to ensure >98% recall for must-keep memories (flagged by Working Memory or user pinning).
-- User-facing qualitative surveys (“Bob stayed focused”) captured via metrics events.
+**Telemetry & Testing:**
+- Deterministic tests cover bounded scores, stable tie-breaking, aware/naive timestamp handling, must-keep priority, unchanged waking order, shadow non-influence, compact active hints, and unchanged consolidation selection.
+- The full suite passes with `163 passed, 3 skipped`.
+- Application-level fixture comparison and user outcome labels for focus/conciseness remain required before pruning can be designed or authorized.
 
-**Configuration:** (Planned) Guarded by `SALIENCE_NETWORK_ENABLED` with advisory mode (log-only) and enforcement mode (prune) to support gradual rollout.
+**Configuration:** `SALIENCE_NETWORK_ENABLED=false` by default. When enabled, `SALIENCE_NETWORK_SHADOW_MODE=true` records decisions without prompt influence; setting shadow mode false permits compact advisory hints, still without pruning. `SALIENCE_NETWORK_TOP_K` defaults to `3`, and `SALIENCE_RECENCY_HALF_LIFE_DAYS` defaults to `30`.
 
 ---
 
@@ -1234,7 +1238,7 @@ The ECA implements a local, three-tier memory design inspired by human memory hi
 | Short-term memory | In-process, per-user `ShortTermMemory` cache of full `CognitiveCycle` objects, newest first; default budget is 25,000 estimated tokens. | Per-field embeddings are attempted but optional. Without them, STM semantic recall returns fewer or no matches. |
 | Conversation summary | One active summary per user stores topics, entities, context points, preferences, and identity hints. Each `upsert_cycle` enqueues its update when `BackgroundTaskQueue` is wired, with a per-user lock to prevent overlapping writes; otherwise it falls back to an inline update. | The queue is in-process rather than durable. Summary generation or embedding failure does not stop the conversation, and shutdown can cancel unfinished work, so a summary may be stale or unembedded. |
 | Long-term memory | ChromaDB persists full cycle JSON plus supplied vector embeddings, compact documents, and metadata. Patterns are stored separately. | Chroma retrieval order is normalized in application code; it is not a database ordering guarantee. |
-| Memory query | Query embedding, then STM cosine search, then Chroma vector search; results are merged and ranked by score. Default threshold is 0.5. | Direct Chroma ranking has a reproducible 50-query synthetic baseline, and corrected L2 conversion passed a live recall check. The fixture's expected-fact labels are not yet exercised through `MemoryService`; threshold calibration, STM/LTM merge behavior, and summary contribution still need application-level evaluation. |
+| Memory query | Query embedding, then STM cosine search, then Chroma vector search; results are merged and ranked by score. Default threshold is 0.5. An optional post-retrieval SalienceNetwork records an explainable alternative ordering without mutating this baseline. | Direct Chroma ranking has a reproducible 50-query synthetic baseline, and corrected L2 conversion passed a live recall check. Salience has deterministic contract tests but has not yet been compared through the application-level fixture or calibrated against user outcomes; pruning does not exist. |
 | STM flush | On token pressure, the service queues summarisation of selected cycles when the background queue is wired; the worker ensures LTM upserts before removing them from STM. Without a queue it uses the synchronous path. | Signal emission is conditional on `DecisionEngine` wiring. The queue has no persistence or automatic retry/recovery, and unfinished work is cancelled on application shutdown. |
 | Episodic/semantic consolidation | `MemoryConsolidationService` can create jobs for episodic-to-semantic conversion, replay, and pattern extraction. | No periodic job loop is started by application startup. The currently implemented service has incompatible `MemoryService` calls that must be repaired before it can be relied upon. |
 

@@ -6,6 +6,7 @@ from typing import List, Optional
 from src.core.exceptions import LLMServiceException, AgentServiceException, APIException
 from src.services.llm_integration_service import LLMIntegrationService
 from src.services.memory_service import MemoryService
+from src.services.salience_network import SalienceNetwork
 from src.models.core_models import AgentOutput, MemoryQueryRequest, CognitiveCycle
 from src.models.agent_models import MemoryAnalysis
 from src.models.memory_models import ShortTermMemory, ConversationSummary
@@ -24,9 +25,15 @@ class MemoryAgent:
     DEFAULT_LIMIT = 5
     STM_CONFIDENCE_BOOST = 0.1  # Boost confidence when STM hits are found
     
-    def __init__(self, llm_service: LLMIntegrationService, memory_service: MemoryService):
+    def __init__(
+        self,
+        llm_service: LLMIntegrationService,
+        memory_service: MemoryService,
+        salience_network: Optional[SalienceNetwork] = None,
+    ):
         self.llm_service = llm_service
         self.memory_service = memory_service
+        self.salience_network = salience_network
         logger.info(f"{self.AGENT_ID} initialized with enhanced memory capabilities.")
 
     def _calculate_memory_confidence(self, 
@@ -58,7 +65,8 @@ class MemoryAgent:
     def _analyze_memories(self, 
                         memories: List[CognitiveCycle], 
                         stm_hits: int,
-                        summary: Optional[ConversationSummary] = None) -> MemoryAnalysis:
+                        summary: Optional[ConversationSummary] = None,
+                        query_text: str = "") -> MemoryAnalysis:
         """
         Analyze retrieved memories and create a structured analysis.
         
@@ -70,11 +78,14 @@ class MemoryAgent:
         Returns:
             MemoryAnalysis: Structured analysis of retrieved memories
         """
+        salience_advisory = self._build_salience_advisory(memories, query_text)
+
         if not memories:
             return MemoryAnalysis(
                 retrieved_context=[],
                 relevance_score=0.0,
-                source_memory_ids=[]
+                source_memory_ids=[],
+                salience_advisory=salience_advisory,
             )
 
         # Calculate average relevance score
@@ -118,8 +129,27 @@ class MemoryAgent:
         return MemoryAnalysis(
             retrieved_context=combined_context,
             relevance_score=avg_relevance,
-            source_memory_ids=[str(mem.cycle_id) for mem in memories]
+            source_memory_ids=[str(mem.cycle_id) for mem in memories],
+            salience_advisory=salience_advisory,
         )
+
+    def _build_salience_advisory(
+        self,
+        memories: List[CognitiveCycle],
+        query_text: str,
+    ) -> Optional[dict]:
+        """Build a bounded alternative ranking without changing retrieval order."""
+        if not self.salience_network or not self.salience_network.enabled:
+            return None
+        try:
+            assessment = self.salience_network.assess_memories(
+                memories,
+                query_text=query_text,
+            )
+            return assessment.model_dump(mode="json")
+        except Exception as exc:
+            logger.warning("Salience assessment failed; retaining baseline retrieval: %s", exc)
+            return None
 
     async def process_input(self, user_input: str, user_id: UUID) -> AgentOutput:
         """
@@ -165,7 +195,8 @@ class MemoryAgent:
             memory_analysis = self._analyze_memories(
                 memories=retrieved_memories,
                 stm_hits=stm_hits,
-                summary=current_summary
+                summary=current_summary,
+                query_text=user_input,
             )
             
             # Calculate confidence based on comprehensive factors

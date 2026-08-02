@@ -41,6 +41,7 @@ from src.services.reinforcement_learning_service import (
     StrategyTypes,
 )
 from src.services.contextual_memory_encoder import ContextualMemoryEncoder
+from src.services.emotional_salience_encoder import EmotionalSalienceEncoder
 from src.services.emotional_memory_service import EmotionalMemoryService
 from src.services.meta_cognitive_monitor import MetaCognitiveMonitor, ActionRecommendation, GapType
 from src.services.procedural_learning_service import ProceduralLearningService, SkillCategory
@@ -95,6 +96,7 @@ class OrchestrationService:
         inquiry_candidate_service: Optional[InquiryCandidateService] = None,
         waking_inquiry_service: Optional[WakingInquiryService] = None,
         research_calibration_ledger: Optional[ResearchCalibrationLedger] = None,
+        emotional_salience_encoder: Optional[EmotionalSalienceEncoder] = None,
     ):
         self.perception_agent = perception_agent
         self.emotional_agent = emotional_agent
@@ -123,6 +125,7 @@ class OrchestrationService:
         self.inquiry_candidate_service = inquiry_candidate_service
         self.waking_inquiry_service = waking_inquiry_service
         self.research_calibration_ledger = research_calibration_ledger
+        self.emotional_salience_encoder = emotional_salience_encoder
         self.session_start = datetime.utcnow()  # Track session start for contextual encoding
         logger.info("OrchestrationService (Central Agent) initialized with all specialized agents, Cognitive Brain, Memory Service, Background Task Queue, Self-Reflection & Discovery Engine, Working Memory Buffer, Thalamus Gateway, Conflict Monitor, Contextual Memory Encoder, Emotional Memory Service, Meta-Cognitive Monitor, optional Attention Controller, and optional Reinforcement Learning Service.")
 
@@ -388,6 +391,29 @@ class OrchestrationService:
         logger.info(f"Cycle {cognitive_cycle.cycle_id}: Updating Working Memory from Stage 1 outputs")
         self.working_memory_buffer.reset()
         self.working_memory_buffer.update_from_stage1(stage1_outputs, effective_input_text)
+
+        memory_output = next(
+            (output for output in stage1_outputs if output.agent_id == "memory_agent"),
+            None,
+        )
+        salience_advisory = (
+            memory_output.analysis.get("salience_advisory") if memory_output else None
+        )
+        if isinstance(salience_advisory, dict):
+            cognitive_cycle.metadata["salience_advisory"] = salience_advisory
+            if self.metrics_service:
+                await self.metrics_service.record_metric(
+                    MetricType.SALIENCE_ASSESSMENT,
+                    {
+                        "candidate_count": salience_advisory.get("candidate_count", 0),
+                        "top_k": salience_advisory.get("top_k", 0),
+                        "shadow_mode": salience_advisory.get("shadow_mode", True),
+                        "advisory_exposed": not salience_advisory.get("shadow_mode", True),
+                        "pruning_applied": False,
+                    },
+                    cycle_id=str(cognitive_cycle.cycle_id),
+                    user_id=str(user_request.user_id),
+                )
         
         # --- Stage 1.5: Conflict Detection ---
         logger.info(f"Cycle {cognitive_cycle.cycle_id}: Conflict Monitor - Checking Stage 1 for inconsistencies")
@@ -1030,6 +1056,19 @@ class OrchestrationService:
             finally:
                 timer.record("procedural_learning", (time.perf_counter() - _procedural_start) * 1000.0)
         
+        # --- Step 2.7: Emotional Salience Encoding ---
+        if self.emotional_salience_encoder:
+            try:
+                with timer.stage("emotional_salience_encoding"):
+                    emotional_salience = self.emotional_salience_encoder.compute_salience(
+                        cognitive_cycle
+                    )
+                cognitive_cycle.metadata["emotional_salience"] = (
+                    emotional_salience.model_dump(mode="json")
+                )
+            except Exception as e:
+                logger.warning(f"Failed to encode emotional salience: {e}")
+
         # --- Step 2.75: Contextual Memory Encoding ---
         logger.info(f"Cycle {cognitive_cycle.cycle_id}: Contextual Memory Encoder - Enriching with contextual bindings")
         try:

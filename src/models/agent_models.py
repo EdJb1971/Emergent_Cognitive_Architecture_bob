@@ -26,6 +26,10 @@ class MemoryAnalysis(BaseModel):
     retrieved_context: List[Dict[str, Any]] = Field(..., description="List of relevant past interactions or knowledge retrieved from memory.")
     relevance_score: float = Field(..., ge=0.0, le=1.0, description="Overall relevance score of the retrieved context.")
     source_memory_ids: List[str] = Field(..., description="List of IDs of the memory entries from which context was retrieved.")
+    salience_advisory: Optional[Dict[str, Any]] = Field(
+        None,
+        description="Optional explainable alternative ranking; never removes baseline memories.",
+    )
 
 class CriticAnalysis(BaseModel):
     logical_coherence: str = Field(..., description="Assessment of the input's logical coherence (e.g., 'high', 'medium', 'low').")
@@ -169,6 +173,10 @@ class WorkingMemoryContext(BaseModel):
     emotional_priority: bool = Field(default=False, description="Whether emotional response is prioritized")
     recalled_memories: List[Dict[str, Any]] = Field(default_factory=list, description="Relevant memories from memory agent")
     memory_confidence: float = Field(default=0.0, ge=0.0, le=1.0, description="Confidence in memory recall")
+    salience_advisory: Optional[Dict[str, Any]] = Field(
+        None,
+        description="Optional memory-priority recommendation retained for audit and concise prompt hints.",
+    )
     
     # Inferred context
     attention_focus: List[str] = Field(default_factory=list, description="Entities/concepts requiring attention")
@@ -334,6 +342,10 @@ class MemoryConsolidationJob(BaseModel):
     cycle_ids_to_process: List[str] = Field(default_factory=list, description="Specific cycles to consolidate")
     consolidation_type: str = Field(..., description="episodic_to_semantic, memory_replay, pattern_extraction, etc.")
     priority: float = Field(..., ge=0.0, le=1.0, description="Priority for processing (based on salience)")
+    salience_advisory: Optional[Dict[str, Any]] = Field(
+        None,
+        description="Advisory replay ordering with the unchanged baseline selection retained.",
+    )
     
     # Job results
     episodes_created: int = Field(default=0, description="Number of episodic memories created")

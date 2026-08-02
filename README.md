@@ -138,6 +138,10 @@ npm run dev
 
 Vite binds to `127.0.0.1:3000` and proxies `/api`, `/chat`, and `/ws` to the local FastAPI server. The proxy reads `API_KEY` from the repository `.env` and injects it server-side, so normal local development does not compile the key into browser JavaScript. Use `npm run build` for the type-checked production build and `npm run preview` for a localhost-only preview.
 
+Open **Ctrl+K → Settings** to replace the default assistant name `Bob` and optionally set your own display name. The assistant name updates the browser title, conversation, operator console, and cognitive prompts without a restart. Names live in git-ignored `runtime_data/identity.json`, outside learned memory, so each clone begins with the same neutral first-run default and no personal identity. Leaving your name blank keeps the label `You`; the system does not derive it from the operating system or arbitrary memory entities.
+
+The same workspace can arm a clean cognitive start. Type `RESET COGNITIVE MEMORY` exactly, then restart the backend. The reset runs before Chroma or SQLite ledgers open and clears `CHROMA_DB_PATH`; configured identity is preserved. The UI can cancel a pending reset before restart. This is irreversible without a backup.
+
 Open the control room with **Ctrl+K** and select **Autonomy** to pause/resume all autonomous work, toggle each cognitive category, inspect its operating limits, cancel/retry tasks, and verify the immutable executive ledger. UI changes persist across restarts. Sleep can be started or stopped from this view without restarting the backend.
 
 Select **Predictive** for the shadow perception review and calibration plane. Review every prior beside the primary observation that tested it, append independent hypothesis/observation/outcome/action judgements, inspect daily coverage and confidence reliability, compare diagnostic cohorts, and verify the immutable ledger. Corrections append rather than overwrite. The interface permanently shows the enforced influence lock because calibration evidence cannot activate attention or learning.
@@ -154,6 +158,9 @@ Every turn also runs a deterministic predictive-perception assessment in enforce
 
 | Flag | Location | Purpose |
 |------|----------|---------|
+| `DEFAULT_ASSISTANT_NAME` | `.env` | First-run assistant name before an operator saves local identity (default: Bob) |
+| `IDENTITY_SETTINGS_PATH` | `.env` | Git-ignored authoritative local identity profile, preserved across memory resets |
+| `RUNTIME_RESET_MARKER_PATH` | `.env` | Git-ignored restart-boundary clean-start request |
 | `ATTENTION_CONTROLLER_ENABLED` | `.env` | Enable dynamic attention routing |
 | `ATTENTION_CONTROLLER_SHADOW_MODE` | `.env` | Log decisions without affecting routing |
 | `SALIENCE_NETWORK_ENABLED` | `.env` | Compute explainable post-retrieval memory rankings |

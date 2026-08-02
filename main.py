@@ -51,6 +51,9 @@ from src.services.research_runtime_control import ResearchRuntimeControl
 from src.api.research_review import router as research_review_router
 from src.api.autonomous_work import router as autonomous_work_router
 from src.api.predictive_review import router as predictive_review_router
+from src.api.settings import router as settings_router
+from src.services.clean_start_service import CleanStartService
+from src.services.identity_service import IdentityService
 from src.models.autonomous_work_models import (
     AutonomousProviderPolicy,
     AutonomousTaskPolicy,
@@ -89,6 +92,23 @@ async def lifespan(app: FastAPI):
     logger.info(f"Starting up {settings.APP_NAME} in {settings.ENVIRONMENT} environment...")
 
     try:
+        # Identity is durable configuration. A requested clean start is consumed
+        # before any cognitive database or background worker opens its files.
+        app.state.clean_start_service = CleanStartService(
+            settings.RUNTIME_RESET_MARKER_PATH,
+            settings.CHROMA_DB_PATH,
+        )
+        reset_consumed = app.state.clean_start_service.consume_before_startup(
+            identity_path=settings.IDENTITY_SETTINGS_PATH
+        )
+        app.state.identity_service = IdentityService(
+            settings.IDENTITY_SETTINGS_PATH,
+            settings.DEFAULT_ASSISTANT_NAME,
+        )
+        await app.state.identity_service.connect()
+        if reset_consumed:
+            logger.warning("Consumed requested clean start before service initialization.")
+
         app.state.ollama_probe = OllamaProbe(
             base_url=settings.OLLAMA_BASE_URL,
             model_name=settings.OLLAMA_CHAT_MODEL,
@@ -329,7 +349,8 @@ async def lifespan(app: FastAPI):
         app.state.proactive_engine = ProactiveEngagementEngine(
             llm_service=app.state.llm_service,
             memory_service=app.state.memory_service,
-            emotional_memory_service=app.state.emotional_memory_service
+            emotional_memory_service=app.state.emotional_memory_service,
+            identity_service=app.state.identity_service,
         )
         logger.info("ProactiveEngagementEngine initialized successfully.")
 
@@ -561,6 +582,7 @@ async def lifespan(app: FastAPI):
             theory_of_mind_service=app.state.theory_of_mind_service,
             synthesis_provider=app.state.synthesis_provider,
             autobiographical_system=app.state.autobiographical_memory_system,
+            identity_service=app.state.identity_service,
         )
         logger.info(
             "CognitiveBrain initialized; final synthesis on %s (%s).",
@@ -756,6 +778,7 @@ app = FastAPI(
 app.include_router(research_review_router)
 app.include_router(autonomous_work_router)
 app.include_router(predictive_review_router)
+app.include_router(settings_router)
 
 # For development, allow all origins. For production, this should be more restrictive.
 app.add_middleware(
@@ -1098,8 +1121,9 @@ async def record_proactive_reaction(
             user_response=user_response
         )
         
+        assistant_name = request_obj.app.state.identity_service.assistant_name
         return {
-            "message": "Reaction recorded successfully. Bob will adjust his behavior accordingly.",
+            "message": f"Reaction recorded successfully. {assistant_name} will adjust future behavior accordingly.",
             "learned": True
         }
     except Exception as e:

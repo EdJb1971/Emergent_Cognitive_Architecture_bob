@@ -7,17 +7,30 @@ import Dashboard from 'components/Dashboard';
 import { Message, ChatRequest } from 'types/chat';
 import { sendMessage } from 'api/chatApi';
 import { getProactiveMessage, recordProactiveReaction } from 'api/dashboardApi';
+import { getIdentity } from 'api/settingsApi';
+import { IdentityProfile } from 'types/settings';
+
+const DEFAULT_IDENTITY: IdentityProfile = {
+  schema_version: 1,
+  assistant_name: 'Bob',
+  user_name: null,
+  assistant_aliases: [],
+  revision: 1,
+  updated_at: new Date(0).toISOString(),
+};
 
 const App: React.FC = () => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [userId, setUserId] = useState('');
   const [sessionId, setSessionId] = useState('');
+  const [identity, setIdentity] = useState<IdentityProfile>(DEFAULT_IDENTITY);
   const [isDashboardOpen, setIsDashboardOpen] = useState(
     () => new URLSearchParams(window.location.search).has('control'),
   );
 
   useEffect(() => {
+    getIdentity().then(setIdentity).catch((error) => console.debug('Identity settings unavailable:', error));
     let storedUserId = localStorage.getItem('user_id');
     if (!storedUserId) {
       storedUserId = uuidv4();
@@ -32,6 +45,10 @@ const App: React.FC = () => {
       timestamp: new Date().toISOString(),
     }]);
   }, []);
+
+  useEffect(() => {
+    document.title = `${identity.assistant_name} · Cognitive Operations`;
+  }, [identity.assistant_name]);
 
   useEffect(() => {
     if (!userId) return;
@@ -130,7 +147,7 @@ const App: React.FC = () => {
   return (
     <div className="eca-app-shell">
       <header className="eca-topbar">
-        <div className="eca-brand"><span><FiActivity /></span><div><b>BOB</b><small>Emergent cognitive architecture</small></div></div>
+        <div className="eca-brand"><span><FiActivity /></span><div><b>{identity.assistant_name.toUpperCase()}</b><small>Emergent cognitive architecture</small></div></div>
         <div className="eca-top-actions">
           <span className="privacy-indicator"><FiLock /> Local cognition</span>
           <span className="system-indicator"><i /><FiRadio /> Online</span>
@@ -140,12 +157,12 @@ const App: React.FC = () => {
       <main className="conversation-stage">
         <section className="conversation-frame">
           <div className="conversation-header"><div><span className="ops-overline">continuous cognition</span><h1>Conversation</h1></div><span className="session-code">SESSION / {sessionId.slice(0, 8).toUpperCase()}</span></div>
-          <ChatWindow messages={messages} isLoading={isLoading} />
+          <ChatWindow messages={messages} isLoading={isLoading} assistantName={identity.assistant_name} userName={identity.user_name} />
           <ChatInput onSendMessage={handleSendMessage} isLoading={isLoading} />
         </section>
         <footer className="conversation-footer"><FiLock /><span>Routine cognition stays local. External research crosses a question-only, audited boundary.</span></footer>
       </main>
-      <Dashboard isOpen={isDashboardOpen} onClose={() => setIsDashboardOpen(false)} />
+      <Dashboard isOpen={isDashboardOpen} onClose={() => setIsDashboardOpen(false)} identity={identity} onIdentityChange={setIdentity} />
     </div>
   );
 };

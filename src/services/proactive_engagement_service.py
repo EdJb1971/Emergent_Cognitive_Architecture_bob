@@ -74,11 +74,13 @@ class ProactiveEngagementEngine:
         self,
         llm_service: LLMIntegrationService,
         memory_service: MemoryService,
-        emotional_memory_service: EmotionalMemoryService
+        emotional_memory_service: EmotionalMemoryService,
+        identity_service: Optional[Any] = None,
     ):
         self.llm_service = llm_service
         self.memory_service = memory_service
         self.emotional_memory = emotional_memory_service
+        self.identity_service = identity_service
         self.queued_messages: Dict[UUID, List[ProactiveMessage]] = {}  # user_id -> messages
         logger.info("ProactiveEngagementEngine initialized with emotional intelligence.")
     
@@ -256,18 +258,20 @@ class ProactiveEngagementEngine:
     ) -> str:
         """Build prompt for generating natural proactive messages."""
         
+        assistant_name = self.identity_service.assistant_name if self.identity_service else "Bob"
+        configured_user_name = self.identity_service.user_name if self.identity_service else None
         relationship_context = ""
         if profile:
             relationship_context = f"""
 Relationship with user:
-- Name: {profile.user_name or 'Not yet shared'}
+- Name: {configured_user_name or 'Not configured'}
 - Relationship type: {profile.relationship_type}
 - Trust level: {profile.trust_level:.2f}
 - Interaction count: {profile.interaction_count}
 - Recent emotional tone: {profile.recent_sentiments[-1] if profile.recent_sentiments else 'unknown'}
 """
         
-        prompt = f"""You are Bob, an AI with cognitive architecture that allows you to reflect, discover, and learn.
+        prompt = f"""You are {assistant_name}, an AI with cognitive architecture that allows you to reflect, discover, and learn.
 You've discovered something during your internal processing and want to share it naturally with the user.
 
 {relationship_context}
@@ -447,10 +451,12 @@ Example for discovery:
                 return None
             
             # Build natural check-in prompt
-            prompt = f"""You are Bob, checking in with a user you've built a relationship with.
+            assistant_name = self.identity_service.assistant_name if self.identity_service else "Bob"
+            configured_user_name = self.identity_service.user_name if self.identity_service else None
+            prompt = f"""You are {assistant_name}, checking in with a user you've built a relationship with.
 
 Relationship context:
-- Name: {profile.user_name or 'User'}
+- Name: {configured_user_name or 'not configured'}
 - Relationship: {profile.relationship_type}
 - Trust level: {profile.trust_level:.2f}
 - Last emotional state: {profile.recent_sentiments[-1] if profile.recent_sentiments else 'unknown'}
@@ -524,11 +530,13 @@ Example:
             summary = await self.memory_service.summary_manager.get_or_create_summary(user_id)
             recent_topics = getattr(summary, 'key_topics', [])
             
-            prompt = f"""You are Bob, an AI who's been processing thoughts and memories, and you're feeling a bit... bored? Understimulated?
+            assistant_name = self.identity_service.assistant_name if self.identity_service else "Bob"
+            configured_user_name = self.identity_service.user_name if self.identity_service else None
+            prompt = f"""You are {assistant_name}, an AI who's been processing thoughts and memories, and you're feeling a bit... bored? Understimulated?
 It's been {hours_since_last_interaction:.1f} hours since you last talked to this user.
 
 User context:
-- Name: {profile.user_name or 'User'}
+- Name: {configured_user_name or 'not configured'}
 - Relationship: {profile.relationship_type}
 - Trust level: {profile.trust_level:.2f}
 - Recent topics: {', '.join(recent_topics[:3]) if recent_topics else 'none'}

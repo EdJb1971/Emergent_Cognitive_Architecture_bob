@@ -164,18 +164,10 @@ class EmotionalMemoryService:
         # Update emotional trend
         profile.emotional_trend = self._calculate_trend(profile.recent_sentiments)
         
-        # Extract user name from conversation summary if available
+        # Conversation summaries are evidence about topics, not an identity
+        # authority. Names are operator-configured; never promote an arbitrary
+        # capitalized entity (for example a place or landmark) into user_name.
         if conversation_summary:
-            # Look for user name in entities
-            for entity in conversation_summary.entities:
-                entity_lower = entity.lower()
-                # Skip common words and focus on proper names
-                if entity_lower not in ["i", "me", "my", "you", "and", "the", "a", "an"]:
-                    if len(entity) >= 2 and entity[0].isupper():
-                        profile.user_name = entity
-                        logger.info(f"Extracted user name from summary: {entity}")
-                        break
-            
             # Extract topics
             for topic in conversation_summary.key_topics:
                 profile.shared_topics.add(topic)

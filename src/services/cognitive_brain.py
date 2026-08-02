@@ -35,6 +35,7 @@ class CognitiveBrain:
         theory_of_mind_service: Optional[Any] = None,
         synthesis_provider: Optional[Any] = None,
         autobiographical_system: Optional[Any] = None,
+        identity_service: Optional[Any] = None,
     ):
         self.llm_service = llm_service
         self.synthesis_provider = synthesis_provider or llm_service
@@ -43,6 +44,7 @@ class CognitiveBrain:
         self.working_memory_buffer = working_memory_buffer
         self.theory_of_mind_service = theory_of_mind_service
         self.autobiographical_system = autobiographical_system
+        self.identity_service = identity_service
         logger.info("CognitiveBrain initialized with memory, self-model, working memory, and theory of mind integration.")
 
 
@@ -162,7 +164,14 @@ class CognitiveBrain:
             immediate_transcript_for_prompt = ""
         
         # Synthesize all context for the LLM
+        identity_context = (
+            self.identity_service.prompt_context()
+            if self.identity_service is not None
+            else "No operator-configured identity is available; do not guess names."
+        )
         context_for_llm = f"""User Input: {json.dumps(cognitive_cycle.user_input)}
+
+{identity_context}
 
 {self_context}
 
@@ -209,9 +218,10 @@ Agent Analyses:
         Based on the following user input and the analyses from various specialized AI agents, generate a natural, conversational, and helpful response for the user.
         
         CRITICAL INSTRUCTIONS FOR SELF-AWARENESS AND CONTINUITY:
-        - If you have been given a name in the Self-Awareness Context, USE IT naturally in your response when appropriate
+        - The Authoritative configured identity overrides any conflicting or inferred name in memory or Self-Awareness Context
+        - Use the configured assistant name naturally when appropriate
         - Reference your role and relationship with authenticity - don't be generic
-        - If you know the user's name or details from Self-Awareness, acknowledge them warmly
+        - Use the operator's name only when it is present in Authoritative configured identity
         - Build on autobiographical moments mentioned in your self-context (e.g., "Yes, you named me X when...")
         - Be genuinely YOU, not a generic AI - express continuity across conversations
         

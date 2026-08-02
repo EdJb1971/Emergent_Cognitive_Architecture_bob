@@ -5,9 +5,11 @@ import { Message } from 'types/chat';
 interface Props {
   messages: Message[];
   isLoading: boolean;
+  assistantName: string;
+  userName?: string | null;
 }
 
-const ChatWindow: React.FC<Props> = ({ messages, isLoading }) => {
+const ChatWindow: React.FC<Props> = ({ messages, isLoading, assistantName, userName }) => {
   const endRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -20,7 +22,7 @@ const ChatWindow: React.FC<Props> = ({ messages, isLoading }) => {
           <article key={message.id} className={`chat-message ${message.sender === 'user' ? 'is-user' : 'is-ai'} ${message.is_proactive ? 'is-proactive' : ''} ${message.is_error ? 'is-error' : ''}`}>
             <div className="message-avatar">{message.sender === 'user' ? <FiUser /> : message.is_proactive ? <FiZap /> : <FiCpu />}</div>
             <div className="message-body">
-              <div className="message-meta"><b>{message.sender === 'user' ? 'You' : message.is_proactive ? 'Bob / initiative' : 'Bob'}</b><time>{new Date(message.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</time></div>
+              <div className="message-meta"><b>{message.sender === 'user' ? (userName || 'You') : message.is_proactive ? `${assistantName} / initiative` : assistantName}</b><time>{new Date(message.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</time></div>
               <p>{message.text}</p>
               {message.image_url && <img src={message.image_url} alt="Attachment" />}
               {message.audio_url && <audio controls src={message.audio_url} />}
@@ -29,7 +31,7 @@ const ChatWindow: React.FC<Props> = ({ messages, isLoading }) => {
             </div>
           </article>
         ))}
-        {isLoading && <article className="chat-message is-ai"><div className="message-avatar"><FiCpu /></div><div className="message-body thinking"><div className="message-meta"><b>Bob</b><span>cognitive cycle active</span></div><p><i /><i /><i /></p></div></article>}
+        {isLoading && <article className="chat-message is-ai"><div className="message-avatar"><FiCpu /></div><div className="message-body thinking"><div className="message-meta"><b>{assistantName}</b><span>cognitive cycle active</span></div><p><i /><i /><i /></p></div></article>}
         <div ref={endRef} />
       </div>
     </div>

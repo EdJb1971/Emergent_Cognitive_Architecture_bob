@@ -10,19 +10,24 @@ import {
   FiGitBranch,
   FiTarget,
   FiShield,
+  FiSettings,
   FiX,
 } from 'react-icons/fi';
 import ResearchCommandCenter, { ResearchView } from 'components/ResearchCommandCenter';
 import AutonomousWorkCenter from 'components/AutonomousWorkCenter';
 import SystemTelemetry from 'components/SystemTelemetry';
 import PredictiveCalibrationCenter from 'components/PredictiveCalibrationCenter';
+import SettingsCenter from 'components/SettingsCenter';
+import { IdentityProfile } from 'types/settings';
 
 interface DashboardProps {
   isOpen: boolean;
   onClose: () => void;
+  identity: IdentityProfile;
+  onIdentityChange: (identity: IdentityProfile) => void;
 }
 
-type View = ResearchView | 'autonomy' | 'predictive' | 'system';
+type View = ResearchView | 'autonomy' | 'predictive' | 'system' | 'settings';
 
 const nav: Array<{ id: View; label: string; description: string; icon: React.ReactNode }> = [
   { id: 'command', label: 'Command', description: 'Research posture', icon: <FiCommand /> },
@@ -32,9 +37,10 @@ const nav: Array<{ id: View; label: string; description: string; icon: React.Rea
   { id: 'ledger', label: 'Ledger', description: 'Immutable history', icon: <FiBookOpen /> },
   { id: 'predictive', label: 'Predictive', description: 'Perception calibration', icon: <FiTarget /> },
   { id: 'system', label: 'System', description: 'Cognitive telemetry', icon: <FiCpu /> },
+  { id: 'settings', label: 'Settings', description: 'Identity & clean start', icon: <FiSettings /> },
 ];
 
-const Dashboard: React.FC<DashboardProps> = ({ isOpen, onClose }) => {
+const Dashboard: React.FC<DashboardProps> = ({ isOpen, onClose, identity, onIdentityChange }) => {
   const [view, setView] = useState<View>('command');
   useEffect(() => {
     const closeOnEscape = (event: KeyboardEvent) => {
@@ -70,11 +76,11 @@ const Dashboard: React.FC<DashboardProps> = ({ isOpen, onClose }) => {
 
       <main className="operator-main">
         <header className="operator-topbar">
-          <div><span className="live-dot" /> <b>BOB / COGNITIVE OPERATIONS</b><small>Single-operator secure console</small></div>
+          <div><span className="live-dot" /> <b>{identity.assistant_name.toUpperCase()} / COGNITIVE OPERATIONS</b><small>Single-operator secure console</small></div>
           <button onClick={onClose} aria-label="Close operator console"><span>Return to conversation</span><FiX /></button>
         </header>
         <div className="operator-content">
-          {view === 'autonomy' ? <AutonomousWorkCenter /> : view === 'predictive' ? <PredictiveCalibrationCenter /> : view !== 'system' ? <ResearchCommandCenter view={view} /> : <SystemTelemetry />}
+          {view === 'settings' ? <SettingsCenter identity={identity} onIdentityChange={onIdentityChange} /> : view === 'autonomy' ? <AutonomousWorkCenter /> : view === 'predictive' ? <PredictiveCalibrationCenter /> : view !== 'system' ? <ResearchCommandCenter view={view} /> : <SystemTelemetry />}
         </div>
       </main>
     </div>

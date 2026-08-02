@@ -14,6 +14,17 @@ class Settings(BaseSettings):
     ENVIRONMENT: str = "development"
     DEBUG_MODE: bool = False
 
+    # Operator identity is configuration, not learned memory. It is persisted
+    # outside CHROMA_DB_PATH so a clean cognitive start can preserve chosen names.
+    IDENTITY_SETTINGS_PATH: str = Field(
+        "./runtime_data/identity.json", env="IDENTITY_SETTINGS_PATH"
+    )
+    RUNTIME_RESET_MARKER_PATH: str = Field(
+        "./runtime_data/pending_memory_reset.json",
+        env="RUNTIME_RESET_MARKER_PATH",
+    )
+    DEFAULT_ASSISTANT_NAME: str = Field("Bob", env="DEFAULT_ASSISTANT_NAME")
+
     # LLM Integration Service Settings
     # Optional: only required when a Gemini-backed provider is actually selected.
     GEMINI_API_KEY: Optional[str] = Field(None, env="GEMINI_API_KEY")

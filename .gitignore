@@ -56,6 +56,7 @@ server*.out
 
 # Data stores & checkpoints
 chroma_db/
+runtime_data/
 *.db
 *.sqlite
 *.sqlite3

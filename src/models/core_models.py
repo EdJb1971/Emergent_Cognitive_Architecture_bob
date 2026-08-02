@@ -27,7 +27,16 @@ class UserRequest(BaseModel):
     session_id: UUID = Field(default_factory=uuid4, description="Unique identifier for the current session.")
     timestamp: datetime = Field(default_factory=datetime.utcnow, description="UTC timestamp of the request.")
     image_base64: Optional[str] = Field(None, description="Optional base64 encoded image data.")
+    image_mime_type: Optional[str] = Field(
+        None,
+        description="Declared image MIME type. The backend verifies it against decoded bytes.",
+    )
     audio_base64: Optional[str] = Field(None, description="Optional base64 encoded audio data.")
+    audio_mime_type: Optional[str] = Field(None, description="Declared audio MIME type, verified against decoded bytes.")
+    audio_source: Literal["direct_user_upload", "live_microphone_capture"] = Field(
+        "direct_user_upload",
+        description="Client-observed origin of the audio; both remain untrusted user media.",
+    )
     metadata: Dict[str, Any] = Field(default_factory=dict, description="Additional metadata (e.g., responding_to_proactive_message)")
 
     # Ensure at least one modality is provided (text, image, or audio)

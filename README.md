@@ -138,6 +138,10 @@ Open the control room with **Ctrl+K** and select **Autonomy** to pause/resume al
 
 Select **System** for the live event-driven observability plane. It displays authenticated typed signals for cognition, memory, research, salience, sleep, and governed autonomous work. The browser resumes from its last process cursor after a transient disconnect and reports any replay/backpressure gap explicitly; telemetry is observational, while ChromaDB and the domain ledgers remain authoritative.
 
+Chat image attachments now use the local visual sensory path. JPEG and PNG uploads are checked for base64 integrity, content/MIME agreement, byte size, dimensions, and pixel count before Ollama sees them. Raw pixels are discarded after that one local observation stage; downstream agents and memory receive only typed, provenance-marked, explicitly untrusted evidence. The path has no Gemini fallback and reports itself unavailable when Ollama has not declared `vision` for the configured model.
+
+Chat audio attachments use the equivalent local auditory relay. Uploads must be 16 kHz mono 16-bit PCM WAV; microphone recordings are resampled and encoded to that format in the browser. The backend independently checks base64, RIFF structure, MIME, byte size, duration, channel/rate/depth, and simple signal quality before a capability-verified local Ollama model sees the clip. Raw audio is then removed. Transcripts and sound labels are provenance-marked untrusted evidence and are never appended to the user's instruction text. There is no cloud audio fallback.
+
 ### Configuration & Feature Flags
 
 | Flag | Location | Purpose |
@@ -160,6 +164,16 @@ Select **System** for the live event-driven observability plane. It displays aut
 | `AUTONOMOUS_DEFAULT_MAX_RETRIES` | `.env` | Bounded automatic retry budget (default: 1) |
 | `TELEMETRY_REPLAY_SIZE` | `.env` | Process-local cursor replay window (default: 2000 events) |
 | `TELEMETRY_SUBSCRIBER_QUEUE_SIZE` | `.env` | Per-viewer non-blocking delivery buffer (default: 256 events) |
+| `VISUAL_INPUT_ENABLED` | `.env` | Enable the local visual sensory relay when model capability is verified (default: true) |
+| `VISUAL_PROVIDER` | `.env` | Visual provider; only `ollama` or `disabled` is accepted |
+| `OLLAMA_VISION_MODEL` | `.env` | Optional dedicated vision model; empty reuses `OLLAMA_CHAT_MODEL` |
+| `VISUAL_MAX_IMAGE_BYTES` | `.env` | Decoded JPEG/PNG size limit (default: 8 MiB) |
+| `VISUAL_MAX_IMAGE_PIXELS` | `.env` | Decoded image pixel limit (default: 24 million) |
+| `AUDIO_INPUT_ENABLED` | `.env` | Enable the local auditory relay when model capability is verified (default: true) |
+| `AUDIO_PROVIDER` | `.env` | Auditory provider; only `ollama` or `disabled` is accepted |
+| `OLLAMA_AUDIO_MODEL` | `.env` | Optional dedicated audio model; empty reuses `OLLAMA_CHAT_MODEL` |
+| `AUDIO_MAX_BYTES` | `.env` | Decoded PCM WAV limit (default: 4 MiB) |
+| `AUDIO_MAX_DURATION_SECONDS` | `.env` | Clip duration limit (default: 60 seconds) |
 | `STM_TOKEN_BUDGET` | `.env` | Short-term memory token limit (default: 25000) |
 | `CONSOLIDATION_INTERVAL_MINUTES` | `.env` | Memory consolidation frequency (default: 30) |
 

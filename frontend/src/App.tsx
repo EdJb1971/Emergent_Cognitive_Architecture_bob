@@ -69,7 +69,14 @@ const App: React.FC = () => {
     return () => document.removeEventListener('keydown', openControlRoom);
   }, []);
 
-  const handleSendMessage = async (text: string, imageBase64?: string, audioBase64?: string) => {
+  const handleSendMessage = async (
+    text: string,
+    imageBase64?: string,
+    audioBase64?: string,
+    imageMimeType?: string,
+    audioMimeType?: string,
+    audioSource?: 'direct_user_upload' | 'live_microphone_capture',
+  ) => {
     if (!text.trim() && !imageBase64 && !audioBase64) return;
     const userMessage: Message = {
       id: uuidv4(),
@@ -77,7 +84,10 @@ const App: React.FC = () => {
       text: text.trim(),
       timestamp: new Date().toISOString(),
       image_base64: imageBase64,
+      image_mime_type: imageMimeType,
       audio_base64: audioBase64,
+      audio_mime_type: audioMimeType,
+      audio_source: audioSource,
     };
     setMessages((current) => [...current, userMessage]);
     setIsLoading(true);
@@ -88,7 +98,10 @@ const App: React.FC = () => {
         session_id: sessionId,
         timestamp: new Date().toISOString(),
         image_base64: imageBase64,
+        image_mime_type: imageMimeType,
         audio_base64: audioBase64,
+        audio_mime_type: audioMimeType,
+        audio_source: audioSource,
       };
       const response = await sendMessage(request);
       const proactive = [...messages, userMessage].filter((message) => message.is_proactive).pop();

@@ -58,8 +58,15 @@ from src.models.autonomous_work_models import (
 from src.services.autonomous_work_governor import AutonomousWorkGovernor
 from src.services.autonomous_work_store import AutonomousWorkStore
 from src.services.audio_input_processor import AudioInputProcessor
+from src.services.visual_input_processor import VisualInputProcessor
 from src.providers import ModelExecutionScheduler, OllamaProbe
-from src.providers.factory import build_active_provider, build_synthesis_provider, enforce_local_only
+from src.providers.factory import (
+    build_active_provider,
+    build_audio_provider,
+    build_synthesis_provider,
+    build_visual_provider,
+    enforce_local_only,
+)
 from src.dependencies import APIKeyAuth, SYSTEM_USER_ID, get_api_key_user_id # Import the authentication dependency
 from typing import Dict, Any, List, Optional
 from uuid import UUID
@@ -82,6 +89,12 @@ async def lifespan(app: FastAPI):
             base_url=settings.OLLAMA_BASE_URL,
             model_name=settings.OLLAMA_CHAT_MODEL,
             embedding_model=settings.OLLAMA_EMBEDDING_MODEL,
+            vision_model=(settings.OLLAMA_VISION_MODEL or settings.OLLAMA_CHAT_MODEL)
+            if settings.VISUAL_INPUT_ENABLED and settings.VISUAL_PROVIDER.lower() == "ollama"
+            else "",
+            audio_model=(settings.OLLAMA_AUDIO_MODEL or settings.OLLAMA_CHAT_MODEL)
+            if settings.AUDIO_INPUT_ENABLED and settings.AUDIO_PROVIDER.lower() == "ollama"
+            else "",
         )
         app.state.model_execution_scheduler = ModelExecutionScheduler(
             max_interactive=settings.OLLAMA_MAX_INTERACTIVE_REQUESTS,
@@ -96,6 +109,22 @@ async def lifespan(app: FastAPI):
         )
         app.state.llm_provider = app.state.llm_service.capabilities
         app.state.ollama_status = await app.state.ollama_probe.probe()
+        app.state.visual_provider = build_visual_provider(
+            app.state.model_execution_scheduler,
+            capability_verified=bool(
+                app.state.ollama_status.get("vision_model_supports_images", False)
+            ),
+        )
+        app.state.audio_provider = build_audio_provider(
+            app.state.model_execution_scheduler,
+            capability_verified=bool(
+                app.state.ollama_status.get("audio_model_supports_audio", False)
+            ),
+        )
+        enforce_local_only(
+            visual=app.state.visual_provider,
+            audio=app.state.audio_provider,
+        )
         # Resolve the vector dimension before any collection is stamped with this identity.
         app.state.embedding_identity = await app.state.llm_service.verify()
         logger.info(
@@ -466,9 +495,31 @@ async def lifespan(app: FastAPI):
             settings.LOCAL_ONLY_MODE,
         )
 
-        # Initialize AudioInputProcessor (multimodal: speech-to-text via LLM)
-        app.state.audio_input_processor = AudioInputProcessor(llm_service=app.state.llm_service)
-        logger.info("AudioInputProcessor initialized successfully.")
+        # Initialize sensory relays. The visual path has no cloud fallback and
+        # remains unavailable unless Ollama declares the model's vision capability.
+        app.state.visual_input_processor = VisualInputProcessor(
+            provider=app.state.visual_provider,
+            max_image_bytes=settings.VISUAL_MAX_IMAGE_BYTES,
+            max_image_pixels=settings.VISUAL_MAX_IMAGE_PIXELS,
+            max_output_tokens=settings.VISUAL_MAX_OUTPUT_TOKENS,
+        )
+        logger.info(
+            "VisualInputProcessor status: %s",
+            app.state.visual_input_processor.status(),
+        )
+
+        # Audio is likewise local-only and capability-gated. The relay accepts one
+        # canonical PCM format so raw browser/provider ambiguity stops here.
+        app.state.audio_input_processor = AudioInputProcessor(
+            provider=app.state.audio_provider,
+            max_audio_bytes=settings.AUDIO_MAX_BYTES,
+            max_duration_seconds=settings.AUDIO_MAX_DURATION_SECONDS,
+            max_output_tokens=settings.AUDIO_MAX_OUTPUT_TOKENS,
+        )
+        logger.info(
+            "AudioInputProcessor status: %s",
+            app.state.audio_input_processor.status(),
+        )
 
         app.state.discovery_agent = DiscoveryAgent(
             llm_service=app.state.llm_service,
@@ -507,6 +558,7 @@ async def lifespan(app: FastAPI):
             discovery_agent=app.state.discovery_agent,
             research_service=app.state.research_service,
             audio_input_processor=app.state.audio_input_processor,
+            visual_input_processor=app.state.visual_input_processor,
             cognitive_brain=app.state.cognitive_brain,
             memory_service=app.state.memory_service,
             background_task_queue=app.state.background_task_queue,
@@ -902,10 +954,13 @@ async def chat_endpoint(user_request: UserRequest, request_obj: Request, user_id
     if not llm_service:
         raise APIException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="LLM service not initialized for content moderation.")
 
-    moderation_result = await llm_service.moderate_content(
-        text=user_request.input_text,
-        image_base64=user_request.image_base64,
-        audio_base64=user_request.audio_base64
+    # Raw media stays inside its local sensory relay. Text-only moderation is
+    # skipped for media-only turns instead of sending pixels/audio to a cloud role
+    # or issuing an invalid empty moderation request.
+    moderation_result = (
+        await llm_service.moderate_content(text=user_request.input_text)
+        if user_request.input_text.strip()
+        else {"is_safe": True, "enforcement": "local_sensory_validation"}
     )
     if not moderation_result.get("is_safe"):
         logger.warning(f"User {user_id} input blocked due to safety concerns: {moderation_result.get('block_reason', 'N/A')}")
@@ -1897,6 +1952,26 @@ async def deep_health_check_endpoint(request_obj: Request):
         health_status["components"]["ollama"] = ollama_status
     except Exception as e:
         health_status["components"]["ollama"] = {"available": False, "message": f"Ollama probe failed: {e}"}
+
+    try:
+        visual_status = request_obj.app.state.visual_input_processor.status()
+        visual_status["status"] = "healthy" if visual_status["available"] else "unavailable"
+        health_status["components"]["visual_sensory_path"] = visual_status
+    except Exception as e:
+        health_status["components"]["visual_sensory_path"] = {
+            "status": "unavailable",
+            "message": f"Visual sensory status failed: {e}",
+        }
+
+    try:
+        auditory_status = request_obj.app.state.audio_input_processor.status()
+        auditory_status["status"] = "healthy" if auditory_status["available"] else "unavailable"
+        health_status["components"]["auditory_sensory_path"] = auditory_status
+    except Exception as e:
+        health_status["components"]["auditory_sensory_path"] = {
+            "status": "unavailable",
+            "message": f"Auditory sensory status failed: {e}",
+        }
 
     try:
         scheduler = await request_obj.app.state.model_execution_scheduler.snapshot()

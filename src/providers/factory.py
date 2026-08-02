@@ -71,6 +71,58 @@ def build_synthesis_provider(scheduler: ModelExecutionScheduler, generation_prov
     raise ConfigurationError(detail=f"Unsupported SYNTHESIS_PROVIDER '{settings.SYNTHESIS_PROVIDER}'.")
 
 
+def build_visual_provider(
+    scheduler: ModelExecutionScheduler,
+    *,
+    capability_verified: bool,
+) -> Optional[OllamaProvider]:
+    """Build the dedicated local visual role without a cloud fallback."""
+    if not settings.VISUAL_INPUT_ENABLED or settings.VISUAL_PROVIDER.lower() == "disabled":
+        return None
+    if settings.VISUAL_PROVIDER.lower() != "ollama":
+        raise ConfigurationError(
+            detail="VISUAL_PROVIDER supports only 'ollama' or 'disabled'; cloud visual fallback is prohibited."
+        )
+    model = settings.OLLAMA_VISION_MODEL or settings.OLLAMA_CHAT_MODEL
+    if not model:
+        # Visual input is an optional sensory capability. A text/cloud deployment
+        # must still start and report the local visual role as unavailable.
+        return None
+    return OllamaProvider(
+        base_url=settings.OLLAMA_BASE_URL,
+        model=model,
+        scheduler=scheduler,
+        num_ctx=settings.OLLAMA_NUM_CTX,
+        thinking=False,
+        supports_images=capability_verified,
+    )
+
+
+def build_audio_provider(
+    scheduler: ModelExecutionScheduler,
+    *,
+    capability_verified: bool,
+) -> Optional[OllamaProvider]:
+    """Build the dedicated local auditory role without a cloud fallback."""
+    if not settings.AUDIO_INPUT_ENABLED or settings.AUDIO_PROVIDER.lower() == "disabled":
+        return None
+    if settings.AUDIO_PROVIDER.lower() != "ollama":
+        raise ConfigurationError(
+            detail="AUDIO_PROVIDER supports only 'ollama' or 'disabled'; cloud audio fallback is prohibited."
+        )
+    model = settings.OLLAMA_AUDIO_MODEL or settings.OLLAMA_CHAT_MODEL
+    if not model:
+        return None
+    return OllamaProvider(
+        base_url=settings.OLLAMA_BASE_URL,
+        model=model,
+        scheduler=scheduler,
+        num_ctx=min(settings.OLLAMA_NUM_CTX, 8192),
+        thinking=False,
+        supports_audio=capability_verified,
+    )
+
+
 def enforce_local_only(**roles: Any) -> None:
     """Fails startup rather than letting a cloud provider slip into a local-only deployment."""
     if not settings.LOCAL_ONLY_MODE:

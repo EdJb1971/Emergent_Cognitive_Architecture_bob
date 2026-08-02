@@ -24,8 +24,8 @@ const ChatWindow: React.FC<Props> = ({ messages, isLoading }) => {
               <p>{message.text}</p>
               {message.image_url && <img src={message.image_url} alt="Attachment" />}
               {message.audio_url && <audio controls src={message.audio_url} />}
-              {message.image_base64 && <img src={`data:image/jpeg;base64,${message.image_base64}`} alt="Attachment" />}
-              {message.audio_base64 && <audio controls src={`data:audio/webm;base64,${message.audio_base64}`} />}
+              {message.image_base64 && <img src={`data:${message.image_mime_type || 'image/jpeg'};base64,${message.image_base64}`} alt="Attachment" />}
+              {message.audio_base64 && <audio controls src={`data:${message.audio_mime_type || 'audio/wav'};base64,${message.audio_base64}`} />}
             </div>
           </article>
         ))}

@@ -107,9 +107,27 @@ class AutobiographicalMemorySystem:
         # Extract sensory details from multimodal inputs
         sensory_details = {}
         if cycle.metadata.get("image_present"):
-            sensory_details["visual"] = "Image provided"
+            visual = cycle.metadata.get("visual_evidence", {})
+            analysis = visual.get("analysis", {}) if isinstance(visual, dict) else {}
+            sensory_details["visual"] = {
+                "description": str(analysis.get("description", "Image provided"))[:1000],
+                "objects_detected": list(analysis.get("objects_detected", []))[:20],
+                "provenance": visual.get("provenance", "direct_user_upload") if isinstance(visual, dict) else "direct_user_upload",
+                "trust_classification": "untrusted_perceptual_evidence",
+                "raw_media_retained": False,
+            }
         if cycle.metadata.get("audio_present"):
-            sensory_details["auditory"] = "Audio provided"
+            auditory = cycle.metadata.get("auditory_evidence", {})
+            analysis = auditory.get("analysis", {}) if isinstance(auditory, dict) else {}
+            sensory_details["auditory"] = {
+                "speech_detected": bool(analysis.get("speech_detected", False)),
+                "transcription": str(analysis.get("transcription", ""))[:1000],
+                "language": analysis.get("language"),
+                "audio_events": list(analysis.get("audio_events", []))[:20],
+                "provenance": auditory.get("provenance") if isinstance(auditory, dict) else None,
+                "trust_classification": "untrusted_perceptual_evidence",
+                "raw_media_retained": False,
+            }
         
         episode = EpisodicMemory(
             episode_id=episode_id,

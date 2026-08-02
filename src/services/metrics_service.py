@@ -42,6 +42,7 @@ class MetricType(Enum):
     LEARNING_EVENT = "learning_event"
     CONFLICT_RESOLUTION = "conflict_resolution"
     COGNITIVE_CYCLE = "cognitive_cycle"
+    PERCEPTUAL_EVENT = "perceptual_event"
     ERROR_ANALYSIS = "error_analysis"
     RL_STRATEGY = "rl_strategy"
     META_COGNITIVE = "meta_cognitive"

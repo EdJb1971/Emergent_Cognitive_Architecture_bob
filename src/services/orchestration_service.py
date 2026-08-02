@@ -26,7 +26,8 @@ from src.services.inquiry_candidate_service import InquiryCandidateService
 from src.services.waking_inquiry_service import WakingInquiryService
 from src.services.research_calibration_ledger import ResearchCalibrationLedger
 from src.services.audio_input_processor import AudioInputProcessor
-from src.models.multimodal_models import AudioAnalysis
+from src.services.visual_input_processor import VisualInputProcessor
+from src.models.multimodal_models import AudioEvidence, VisualEvidence
 from src.services.cognitive_brain import CognitiveBrain
 from src.services.memory_service import MemoryService
 from src.services.background_task_queue import BackgroundTaskQueue
@@ -88,6 +89,7 @@ class OrchestrationService:
         conflict_monitor: Optional[ConflictMonitor] = None,
         contextual_memory_encoder: Optional[ContextualMemoryEncoder] = None,
         audio_input_processor: Optional[AudioInputProcessor] = None,
+        visual_input_processor: Optional[VisualInputProcessor] = None,
         rl_service: Optional[ReinforcementLearningService] = None,
         emotional_memory_service: Optional[EmotionalMemoryService] = None,
         meta_cognitive_monitor: Optional[MetaCognitiveMonitor] = None,
@@ -108,6 +110,7 @@ class OrchestrationService:
         self.discovery_agent = discovery_agent
         self.research_service = research_service
         self.audio_input_processor = audio_input_processor
+        self.visual_input_processor = visual_input_processor
         self.cognitive_brain = cognitive_brain
         self.memory_service = memory_service
         self.background_task_queue = background_task_queue
@@ -155,33 +158,80 @@ class OrchestrationService:
             await self.autonomous_work_governor.note_activity(user_request.user_id)
         timer = StageTimer()
 
-        # If audio present, attempt transcription first so everyone can use the text
+        # The auditory relay validates raw audio once and emits bounded, untrusted
+        # evidence. A transcript is never promoted into the user's instruction text.
         effective_input_text = user_request.input_text or ""
-        audio_analysis_dict: Optional[Dict[str, Any]] = None
-        if user_request.audio_base64 and self.audio_input_processor:
-            try:
-                with timer.stage("audio_transcription"):
-                    audio_analysis: AudioAnalysis = await self.audio_input_processor.process_audio(
-                        audio_base64=user_request.audio_base64
-                    )
-                audio_analysis_dict = audio_analysis.model_dump()
-                if audio_analysis.transcription:
-                    if effective_input_text:
-                        effective_input_text = f"{effective_input_text}\n\n[Audio transcript]: {audio_analysis.transcription}"
-                    else:
-                        effective_input_text = audio_analysis.transcription
-                logger.info(f"Audio transcription attached to cycle input (first 60 chars): {effective_input_text[:60]}...")
-            except Exception as e:
-                logger.warning(f"Audio transcription failed or skipped: {e}")
+        audio_evidence: Optional[AudioEvidence] = None
+        audio_processing_status = "not_requested"
+        audio_processing_error: Optional[str] = None
+        if user_request.audio_base64:
+            if not self.audio_input_processor:
+                audio_processing_status = "unavailable"
+                audio_processing_error = "audio_input_processor_not_configured"
+            else:
+                try:
+                    with timer.stage("audio_perception"):
+                        audio_evidence = await self.audio_input_processor.process_audio(
+                            audio_base64=user_request.audio_base64,
+                            audio_mime_type=user_request.audio_mime_type,
+                            provenance=user_request.audio_source,
+                        )
+                    audio_processing_status = "processed"
+                except APIException as error:
+                    if error.status_code in {400, 413, 415}:
+                        raise
+                    audio_processing_status = "unavailable"
+                    audio_processing_error = f"provider_error_{error.status_code}"
+                    logger.warning("Audio processing degraded safely: %s", error.detail)
+                except Exception as error:
+                    audio_processing_status = "unavailable"
+                    audio_processing_error = type(error).__name__
+                    logger.warning("Audio processing degraded safely: %s", error)
 
-        # If after audio processing there's still no text, provide a safe placeholder to satisfy downstream validators
+        # The visual relay is deliberately sequential: it validates raw pixels once,
+        # uses only a capability-verified local provider, then discards raw media from
+        # the remainder of the cognitive pipeline.
+        visual_evidence: Optional[VisualEvidence] = None
+        visual_processing_status = "not_requested"
+        visual_processing_error: Optional[str] = None
+        if user_request.image_base64:
+            if not self.visual_input_processor:
+                visual_processing_status = "unavailable"
+                visual_processing_error = "visual_input_processor_not_configured"
+            else:
+                try:
+                    with timer.stage("visual_perception"):
+                        visual_evidence = await self.visual_input_processor.process_visual(
+                            image_base64=user_request.image_base64,
+                            image_mime_type=user_request.image_mime_type,
+                        )
+                    visual_processing_status = "processed"
+                except APIException as error:
+                    if error.status_code in {400, 413, 415}:
+                        raise
+                    visual_processing_status = "unavailable"
+                    visual_processing_error = f"provider_error_{error.status_code}"
+                    logger.warning("Visual processing degraded safely: %s", error.detail)
+                except Exception as error:
+                    visual_processing_status = "unavailable"
+                    visual_processing_error = type(error).__name__
+                    logger.warning("Visual processing degraded safely: %s", error)
+
+        # Media-only turns use inert placeholders; perceptual evidence remains in
+        # its typed channel and cannot redefine the user's instruction.
         used_placeholder = False
         if not effective_input_text or not effective_input_text.strip():
-            if user_request.audio_base64:
-                effective_input_text = "[Audio received; transcription unavailable]"
+            if audio_evidence:
+                effective_input_text = "[Audio provided; see untrusted auditory evidence]"
+                used_placeholder = True
+            elif user_request.audio_base64:
+                effective_input_text = "[Audio received; local auditory understanding unavailable]"
+                used_placeholder = True
+            elif visual_evidence:
+                effective_input_text = "[Image provided; see untrusted visual evidence]"
                 used_placeholder = True
             elif user_request.image_base64:
-                effective_input_text = "[Image received; description unavailable]"
+                effective_input_text = "[Image received; local visual understanding unavailable]"
                 used_placeholder = True
 
         cognitive_cycle = CognitiveCycle(
@@ -307,8 +357,78 @@ class OrchestrationService:
             cognitive_cycle.metadata["attention_directives"] = attention_directives
         if used_placeholder:
             cognitive_cycle.metadata.setdefault("notes", []).append("effective_input_text was placeholder due to missing transcription/description")
-        if audio_analysis_dict:
-            cognitive_cycle.metadata["audio_analysis"] = audio_analysis_dict
+        if user_request.audio_base64:
+            cognitive_cycle.metadata["audio_present"] = True
+            cognitive_cycle.metadata["auditory_processing"] = {
+                "status": audio_processing_status,
+                "error": audio_processing_error,
+                "raw_media_retained": False,
+            }
+        if audio_evidence:
+            cognitive_cycle.metadata["auditory_evidence"] = audio_evidence.model_dump(mode="json")
+        if user_request.image_base64:
+            cognitive_cycle.metadata["image_present"] = True
+            cognitive_cycle.metadata["visual_processing"] = {
+                "status": visual_processing_status,
+                "error": visual_processing_error,
+                "raw_media_retained": False,
+            }
+        if visual_evidence:
+            cognitive_cycle.metadata["visual_evidence"] = visual_evidence.model_dump(mode="json")
+        if self.metrics_service and user_request.image_base64:
+            await self.metrics_service.record_metric(
+                MetricType.PERCEPTUAL_EVENT,
+                {
+                    "modality": "image",
+                    "status": visual_processing_status,
+                    "provider": visual_evidence.provider if visual_evidence else None,
+                    "model": visual_evidence.model if visual_evidence else None,
+                    "is_local": visual_evidence.is_local if visual_evidence else None,
+                    "mime_type": visual_evidence.mime_type if visual_evidence else None,
+                    "byte_count": visual_evidence.byte_count if visual_evidence else None,
+                    "width": visual_evidence.width if visual_evidence else None,
+                    "height": visual_evidence.height if visual_evidence else None,
+                    "error_class": visual_processing_error,
+                    "raw_media_retained": False,
+                },
+                cycle_id=str(cognitive_cycle.cycle_id),
+                user_id=str(user_request.user_id),
+                telemetry_event_type=f"visual_{visual_processing_status}",
+                source_reference=(
+                    f"image_sha256:{visual_evidence.sha256}" if visual_evidence else None
+                ),
+            )
+        if self.metrics_service and user_request.audio_base64:
+            await self.metrics_service.record_metric(
+                MetricType.PERCEPTUAL_EVENT,
+                {
+                    "modality": "audio",
+                    "status": audio_processing_status,
+                    "provider": audio_evidence.provider if audio_evidence else None,
+                    "model": audio_evidence.model if audio_evidence else None,
+                    "is_local": audio_evidence.is_local if audio_evidence else None,
+                    "mime_type": audio_evidence.mime_type if audio_evidence else None,
+                    "byte_count": audio_evidence.byte_count if audio_evidence else None,
+                    "duration_seconds": audio_evidence.duration_seconds if audio_evidence else None,
+                    "sample_rate_hz": audio_evidence.sample_rate_hz if audio_evidence else None,
+                    "channels": audio_evidence.channels if audio_evidence else None,
+                    "bits_per_sample": audio_evidence.bits_per_sample if audio_evidence else None,
+                    "speech_detected": (
+                        audio_evidence.analysis.speech_detected if audio_evidence else None
+                    ),
+                    "inference_performed": (
+                        audio_evidence.inference_performed if audio_evidence else None
+                    ),
+                    "error_class": audio_processing_error,
+                    "raw_media_retained": False,
+                },
+                cycle_id=str(cognitive_cycle.cycle_id),
+                user_id=str(user_request.user_id),
+                telemetry_event_type=f"auditory_{audio_processing_status}",
+                source_reference=(
+                    f"audio_sha256:{audio_evidence.sha256}" if audio_evidence else None
+                ),
+            )
 
         # --- Stage 1: Foundational Agents (with selective activation) ---
         logger.info(f"Cycle {cognitive_cycle.cycle_id}: Starting Stage 1 - Foundational Agents")
@@ -321,8 +441,8 @@ class OrchestrationService:
                 self.perception_agent.process_input(
                     user_input=effective_input_text,
                     user_id=user_request.user_id,
-                    image_base64=user_request.image_base64,
-                    audio_base64=user_request.audio_base64
+                    visual_evidence=visual_evidence,
+                    audio_evidence=audio_evidence,
                 )
             ))
         

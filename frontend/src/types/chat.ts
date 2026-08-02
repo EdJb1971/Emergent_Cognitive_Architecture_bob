@@ -4,7 +4,10 @@ export interface ChatRequest {
   session_id: string;
   timestamp: string;
   image_base64?: string;
+  image_mime_type?: string;
   audio_base64?: string;
+  audio_mime_type?: string;
+  audio_source?: 'direct_user_upload' | 'live_microphone_capture';
 }
 
 export interface ChatResponse {
@@ -21,7 +24,10 @@ export interface Message {
   image_url?: string; // For displaying images (e.g., if AI sends one, or user's own)
   audio_url?: string; // For displaying audio (e.g., if AI sends one, or user's own)
   image_base64?: string; // For user's own image input
+  image_mime_type?: string;
   audio_base64?: string; // For user's own audio input
+  audio_mime_type?: string;
+  audio_source?: 'direct_user_upload' | 'live_microphone_capture';
   is_loading?: boolean;
   is_error?: boolean;
   is_proactive?: boolean; // Whether this message was initiated by the AI

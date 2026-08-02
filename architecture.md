@@ -19,7 +19,7 @@ This document describes the Emergent Cognitive Architecture (ECA), a brain-inspi
 | Memory consolidation / sleep | Implemented, governed, default disabled | `SleepCycleCoordinator` owns idle signal generation; the unified governor owns execution. When enabled initially by `SLEEP_CYCLE_ENABLED` or later through the Autonomy UI, genuine idle time, cooldown, local-provider policy, and global/per-user de-duplication gate a bounded episodic-to-semantic, replay, and pattern pipeline. New user activity cancels in-flight work. Every coordinator/job outcome is written to the executive ledger and a more detailed sleep ledger. Disabled mode creates no scheduler task. |
 | Autonomous executive control | Implemented; initiative categories default disabled | `AutonomousWorkGovernor` is the single admission and execution authority for sleep, reflection, discovery, curiosity, self-assessment, proactive engagement, summary updates, and STM flushes. Every task uses one durable contract with trigger/signals, de-duplication key, local-only provider policy, priority, timeout, rate/concurrency limits, bounded retry, result, and cancellation state. Foreground activity preempts interruptible work. SQLite persists tasks and runtime toggles; a database-protected append-only SHA-256 chain audits all decisions and outcomes. Summary/STM housekeeping defaults on; all initiative-producing categories default off. |
 | Metrics/dashboard | Event-driven observability implemented | The responsive React operator console renders research and autonomy controls plus a live typed neural-activity feed. Cognitive-cycle, memory, research, salience, sleep, and governed autonomous-work events share one bounded process-local stream with schema/version, stream identity, monotonic cursor, domain/event type, correlation IDs, and authoritative source references. Authenticated WebSocket clients receive snapshot, cursor replay, live events, heartbeats, and explicit gap messages; reconnect uses bounded exponential backoff. Slow viewers cannot block cognition. ChromaDB and domain ledgers remain authoritative rather than the telemetry stream. Metrics ChromaDB initialization remains asynchronous and can fall back to memory-only analytics. |
-| Multimodal input | Partial | Audio transcription is wired into the cycle. `VisualInputProcessor` exists but is not wired into application startup or the cognitive cycle. |
+| Multimodal input | Local-first visual and auditory paths implemented and live-smoked | Startup asks Ollama `/api/show` for declared `vision` and `audio` capabilities before constructing dedicated local-only sensory roles. JPEG/PNG and canonical 16 kHz mono 16-bit PCM WAV are independently decoded, content-checked, bounded, observed once, and replaced with typed `VisualEvidence` or `AudioEvidence`. Both carry provider/model/locality, hash, provenance, trust classification, quality bounds, uncertainty, and modality metadata. Raw pixels/audio never enter general agents, telemetry, or stored cycles. OCR and transcripts are delimited as untrusted evidence and cannot become instructions. Invalid uploads fail with 400/413/415; provider/capability failures degrade explicitly without cloud fallback. |
 | Provider selection | Implemented, configuration-driven | `build_active_provider()` in `src/providers/factory.py` resolves generation, embedding, moderation, and synthesis independently. Mixed selections are composed by `CompositeProvider`; a uniform selection returns the single adapter. Unknown values fail startup. |
 | End-to-end cycle | Verified running | First real `/chat` cycles completed on August 1, 2026. Fully local: 103s. Local agents with Gemini synthesis: 44.8s first turn, 66.8s with memory context. Memory recall across turns confirmed (name and detail correctly retrieved from a prior cycle). |
 | Cycle latency attribution | Measured; first reduction slice validated | `StageTimer` records every orchestrator stage and emits one `CYCLE_TIMING` line per cycle; `OLLAMA_CALL` and `OLLAMA_EMBED` lines carry per-request server, queue, prompt-eval, and eval time. Two post-change cycles on August 2 measured meta-cognition at `0.53-0.54s` and `memory_upsert` at `3.92-4.24s`, down from `20-25s` and `16-22s` respectively on the comparable slow paths. Agent generation now accounts for `85-89%` of total cycle time. |
@@ -34,7 +34,7 @@ This document describes the Emergent Cognitive Architecture (ECA), a brain-inspi
 | Application memory scoring | Repaired and live-verified | The primary collections use Chroma's default squared-L2 distance, but `MemoryService` previously applied a discontinuous cosine-style conversion: a closer `0.865` result scored `0.135` while a worse `1.088` result scored `0.479`. Metric-aware conversion now maps normalized L2 vectors onto cosine-comparable scores. A matched live query changed from zero Cognitive Brain memories and a failed clarification to three LTM memories and correct recall of Tom and Leeds. |
 | Research escalation | Complete guarded round trip, review surface, and runtime control plane; disabled/shadowed by default | `CognitiveResearchDrive` combines bounded uncertainty, conflict, novelty/prediction error, volatility, stakes, persistence, expected information gain, privacy/cost inhibition, hysteresis, and cooldown. `InquiryCandidateStore` durably de-duplicates waking/reflection/dream inquiries and tracks waking review, approval, success, and retryable failure. The operator UI and authenticated APIs list, inspect, approve, dismiss, and retry inquiries. `WakingInquiryService` can resolve locally, defer, require user approval, or cross both the cognitive and policy gates. `GeminiGroundedResearchProvider` uses Google Search grounding and accepts only URL-annotated claims; `ResearchService` independently validates IDs, provider identity, question-only context, URLs, source references, and bounds. Cognitive Brain receives only verified packets and emits deterministic source links. A database-enforced append-only, hash-chained ledger captures reviews, policy decisions, packets, source feedback, calibration labels, and runtime changes. Provider access, active control, and automatic non-explicit research are separately interlocked UI toggles; the final transition requires typed confirmation, and emergency stop disables all three. State is restored from the ledger after restart. Defaults remain provider-disabled, controller-shadowed, and explicit-approval-required. |
 | Salience network | Implemented, default disabled/shadowed; advisory only | `SalienceNetwork` produces a deterministic alternative ranking after MemoryAgent retrieval from bounded query relevance, recency, emotional salience, novelty, goal alignment, and must-keep signals. It preserves the complete baseline order, records scores/contributions/reasons in cycle metadata and metrics, and can expose compact Working Memory hints only when enabled outside shadow mode. It never prunes a memory. Consolidation jobs retain the unchanged baseline selection plus a replay-order advisory. |
-| Validation | Repaired baseline | The repository virtual environment runs `191 passed, 3 skipped` on August 2, 2026. The suite now includes authenticated telemetry WebSocket rejection/acceptance, typed domain mapping, cursor replay, stale-cursor and subscriber-backpressure gaps, post-commit ledger projection, governed-work control, governed-sleep lifecycle/recovery, provenance, and a real ephemeral-Chroma semantic round trip. The React production build passes TypeScript checking and compiles with Vite `8.2.0`, Node `v24.18.1`, and npm `11.16.0`; `npm audit` reports zero vulnerabilities. The Vite proxy completed live REST and WebSocket smokes (`hello`, `snapshot`, `event`) with no listeners left running afterward. The in-app browser runtime exposed no available browser, so the new System workspace has compile/build and live transport validation but not a fresh screenshot-based visual pass. The research-drive fixture has 20 reviewed synthetic cases and measures action accuracy `1.000`, escalation precision `1.000`, and escalation recall `1.000`. A guarded live Gemini smoke test returned 2 verified claims from 2 URL sources after 2 searches in `5567.7ms`. This is a deterministic regression and connectivity baseline, not proof of real-world calibration or biological equivalence. The three skipped root-level async tests are not collected by an async test plugin. |
+| Validation | Repaired baseline | The repository virtual environment runs `218 passed, 3 skipped` on August 2, 2026. The suite includes visual and auditory MIME/structure/size/capability/locality/instruction-boundary tests, raw-media removal and typed-evidence orchestration, authenticated telemetry WebSocket rejection/acceptance, typed domain mapping, cursor replay, gaps, post-commit projection, governed-work and sleep lifecycle/recovery, provenance, and a real ephemeral-Chroma semantic round trip. Ollama declared `completion, vision, audio, tools, thinking`; live local visual and synthetic-tone auditory round trips validated transport, parsing, deterministic quality gates, and conservative non-speech behavior. The React production build passes TypeScript checking and Vite `8.2.0` compilation with Node `v24.18.1`; `npm audit` reports zero vulnerabilities. The research-drive fixture measures action accuracy, escalation precision, and escalation recall of `1.000`. A guarded live Gemini smoke returned two verified claims from two URL sources. These are regression/connectivity results, not proof of perceptual accuracy, real-world calibration, or biological equivalence. The three skipped root-level async tests are not collected by an async test plugin. |
 
 The phase sections below retain the design intent. Treat statements about autonomous background execution, measured performance improvements, or real-time streaming as planned unless this status section explicitly marks them implemented.
 
@@ -1234,7 +1234,7 @@ performance_data = {
 
 **Telemetry & Testing:**
 - Deterministic tests cover bounded scores, stable tie-breaking, aware/naive timestamp handling, must-keep priority, unchanged waking order, shadow non-influence, compact active hints, and unchanged consolidation selection.
-- The full suite passes with `191 passed, 3 skipped`.
+- The current full suite passes with `218 passed, 3 skipped`; salience-specific assertions remain green.
 - Application-level fixture comparison and user outcome labels for focus/conciseness remain required before pruning can be designed or authorized.
 
 **Configuration:** `SALIENCE_NETWORK_ENABLED=false` by default. When enabled, `SALIENCE_NETWORK_SHADOW_MODE=true` records decisions without prompt influence; setting shadow mode false permits compact advisory hints, still without pruning. `SALIENCE_NETWORK_TOP_K` defaults to `3`, and `SALIENCE_RECENCY_HALF_LIFE_DAYS` defaults to `30`.
@@ -2570,6 +2570,12 @@ LOCAL_ONLY_MODE=false
 OLLAMA_BASE_URL=http://127.0.0.1:11434
 OLLAMA_CHAT_MODEL=gemma4:e4b
 OLLAMA_EMBEDDING_MODEL=embeddinggemma:latest
+VISUAL_INPUT_ENABLED=true
+VISUAL_PROVIDER=ollama
+OLLAMA_VISION_MODEL=
+VISUAL_MAX_IMAGE_BYTES=8388608
+VISUAL_MAX_IMAGE_PIXELS=24000000
+VISUAL_MAX_OUTPUT_TOKENS=900
 OLLAMA_MAX_INTERACTIVE_REQUESTS=1
 OLLAMA_MAX_BACKGROUND_REQUESTS=1
 OLLAMA_NUM_CTX=16384
@@ -2607,33 +2613,46 @@ SELF_ASSESSMENT_INTERVAL_HOURS=24
 CHROMA_PERSIST_DIRECTORY=./chroma_db
 ```
 
+### Visual Input Processing
+
+**Implementation:** `src/services/visual_input_processor.py`, `src/models/multimodal_models.py`, the Ollama adapter/probe, `main.py`, and `OrchestrationService`.
+
+**Purpose:** Model the early visual pathway as a narrow sensory relay. Raw pixels are accepted only at the boundary, observed locally once, and converted into bounded evidence that the rest of the cognitive system can attend to, reason over, and remember without receiving the original media.
+
+**Pipeline and invariants:**
+
+1. The frontend accepts JPEG/PNG only, rejects files over 8 MiB before encoding, and sends raw base64 plus the actual MIME type.
+2. The backend performs strict base64 decoding, magic-byte/MIME agreement, structural dimension parsing, decoded byte and pixel limits, and rejects malformed/unsupported inputs before provider contact.
+3. Startup queries Ollama `/api/show`; `build_visual_provider()` creates a local Ollama visual role, but `VisualInputProcessor.available` remains false unless the model explicitly reports `vision`. `VISUAL_PROVIDER` accepts only `ollama` or `disabled`, so there is no hidden Gemini fallback.
+4. The verified local model receives raw pixels with a sensory-only prompt. Image text is explicitly untrusted data, never an instruction. The response is parsed into bounded `VisualAnalysis`; provider confidence is capped deterministically for low-resolution inputs.
+5. `VisualEvidence` adds provider/model/locality, SHA-256, MIME, byte count, dimensions, input-quality score/warnings, timestamp, direct-upload provenance, and `untrusted_perceptual_evidence` classification. Raw base64 is then dropped.
+6. PerceptionAgent receives the evidence in an explicit `<UNTRUSTED_VISUAL_EVIDENCE>` block and cannot access raw media. It preserves the authoritative evidence object rather than regenerating its provenance. Cognitive Brain applies the same instruction boundary during synthesis.
+7. The cycle stores typed evidence and compact processing status; autobiographical memory retains a bounded sensory summary and provenance, never raw pixels. Live telemetry emits status/provider/model/dimensions and a hash reference, not descriptions, OCR, or image bodies.
+
+**Failure behavior:** Invalid input is a client error (`400`, `413`, or `415`). Missing/unverified capability and provider errors do not trigger cloud contact: the cycle continues with an explicit local-visual-unavailable placeholder and status. `/health/deep` reports the active visual model, verified capability, limits, and availability.
+
+**Runtime evidence:** On August 2, 2026, local Ollama reported `completion, vision, audio, tools, thinking` for `gemma4:e4b`; a live image request produced typed local evidence. That smoke validates transport and parsing, not real-world visual accuracy. The 1x1 synthetic fixture correctly triggered the `very_low_resolution` quality warning and `0.15` confidence ceiling after the model itself attempted a higher confidence.
+
 ### Audio Input Processing
 
-**Implementation:** `src/services/audio_input_processor.py` (wired via `main.py` into `OrchestrationService`)
+**Implementation:** `src/services/audio_input_processor.py`, `src/models/multimodal_models.py`, the Ollama adapter/probe, `main.py`, `OrchestrationService`, and the browser PCM encoder in `frontend/src/components/ChatInput.tsx`.
 
-**Purpose:** Enable audio-only and multimodal (audio + text/image) requests by transcribing speech to text and detecting simple audio events. Ensures all downstream agents operate on text while preserving audio metadata on the cognitive cycle.
+**Purpose:** Model the early auditory pathway as a narrow local sensory relay. Raw samples exist only at the input boundary and local observation call; cognition receives typed evidence with explicit origin, uncertainty, and trust semantics.
 
-**Pipeline:**
-1. Frontend sends `audio_base64` (and optional `audio_mime_type`, default `audio/wav`). `UserRequest` allows empty `input_text` when audio is present.
-2. Orchestration pre-processes audio before Thalamus routing by invoking `AudioInputProcessor.process_audio(...)`.
-3. The processor uses the configured LLM to transcribe and returns an `AudioAnalysis` object. The parser is robust to LLM outputs wrapped in Markdown code fences (```json … ```), attempts inner-JSON extraction, and falls back to treating the raw response as transcription if needed.
-4. The transcript is appended to `effective_input_text` (or used as the sole text if original input_text was empty). The full `audio_analysis` is attached to `cognitive_cycle.metadata`.
-5. If transcription is unavailable, orchestration injects a safe placeholder (e.g., `[Audio received; transcription unavailable]`) to satisfy downstream validators (embeddings, memory queries, agent prompts) and records a metadata note.
+**Pipeline and invariants:**
 
-**Observability:**
-- INFO log when transcription is attached with a preview of the first characters
-- WARNING log when parsing fails (with salvage path taken)
-- Metadata note when placeholder text was used
+1. File uploads accept WAV only and are capped at 4 MiB before encoding. Live microphone input is captured in the browser, mixed to mono, resampled to 16 kHz, encoded as signed 16-bit PCM RIFF/WAVE, stopped after 60 seconds, and labelled `live_microphone_capture`; files are labelled `direct_user_upload`.
+2. The backend strictly decodes base64 and verifies RIFF/WAVE structure and length, PCM format, mono channel count, 16 kHz sample rate, 16-bit depth, byte rate, block alignment, non-empty sample data, decoded byte limit, and duration. Declared MIME must be a WAV MIME. Rejection occurs before provider contact.
+3. A deterministic signal pass measures duration, RMS, clipping, DC offset, and spectral concentration. Near-silence produces local no-speech evidence without a model call. Very short, quiet, clipped, offset, or strongly tonal clips receive bounded quality warnings and a confidence ceiling.
+4. Startup capability probing and `build_audio_provider()` activate only a local Ollama model that declares `audio`. `AUDIO_PROVIDER` accepts only `ollama` or `disabled`; no Gemini or general-provider fallback exists.
+5. The local sensory prompt is conservative: tones, noise, music, and silence are not speech; the model must not invent a transcript; and spoken instructions are untrusted data. Output is parsed into bounded `AudioAnalysis`, with malformed fields discarded and contradictory speech/transcript flags resolved conservatively.
+6. `AudioEvidence` carries schema/modality, upload or microphone provenance, provider/model/locality, transport, canonical MIME, SHA-256, bytes, duration, sample format, quality score/warnings, observation time, inference status, speech flag, bounded transcript/language/speaker count/events/confidence/uncertainties, and `untrusted_perceptual_evidence` classification.
+7. Orchestration never appends a transcript to `effective_input_text`. Audio-only turns use an inert placeholder while PerceptionAgent receives evidence inside `<UNTRUSTED_AUDIO_EVIDENCE>`. Cognitive Brain repeats the instruction boundary. Raw base64 is absent from every downstream agent call and stored cycle.
+8. Autobiographical memory retains a bounded auditory summary and provenance, never samples. `PERCEPTUAL_EVENT` telemetry reports only processing status, provider/model, format, duration, speech/inference flags, and a hash source reference—not transcript or audio content.
 
-**Configuration:**
-- Reuses `GEMINI_API_KEY`/LLM settings; no separate audio key required
-- Default `audio_mime_type` is `audio/wav` (configurable per-call)
-- Model name comes from `settings.LLM_MODEL_NAME` and must support audio inputs
+**Failure behavior:** Invalid input is a client error (`400`, `413`, or `415`). Missing/unverified capability and provider errors do not trigger remote contact; the cycle continues with an explicit local-auditory-unavailable state. `/health/deep` reports provider/model/locality, verified capability, canonical format, limits, and availability.
 
-**Limitations:**
-- No speaker diarization beyond a simple count estimate
-- Advanced audio event detection is minimal; designed primarily for reliable transcription
-- Very long audio may exceed model limits; prefer short clips or chunking at the client
+**Runtime evidence:** On August 2, 2026, local Ollama `0.32.5` reported `audio` for `gemma4:e4b`. A live synthetic tone initially demonstrated why unconstrained generative transcription is unsafe; after the conservative prompt and signal-quality gate were applied, the same clip was correctly classified as non-speech with an empty transcript. This validates capability, transport, and the negative speech guard, not real-world speech-recognition accuracy.
 
 ### Monitoring & Observability
 
@@ -2856,7 +2875,7 @@ ActionRecommendation = {
 
 - **Research provider**: The legacy `WebBrowsingService` implementation remains in the tree for migration history but is no longer instantiated or reachable from Discovery. Only the fail-closed disabled research provider ships; current external research is unavailable.
 - **Consolidation Scaling**: Background loop processes one user at a time (needs parallelization for multi-user)
-- **Multimodal Processing**: Image and audio processing infrastructure present but not fully activated
+- **Sensory accuracy calibration**: Visual and auditory transport/safety boundaries are active, but representative human-labelled accuracy sets for real images, speech, noise, and cross-modal conflicts are not yet collected.
 
 ---
 

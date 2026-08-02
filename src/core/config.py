@@ -25,6 +25,34 @@ class Settings(BaseSettings):
     LLM_PROVIDER: str = Field("gemini", env="LLM_PROVIDER")
     OLLAMA_BASE_URL: str = Field("http://localhost:11434", env="OLLAMA_BASE_URL")
     OLLAMA_CHAT_MODEL: str = Field("", env="OLLAMA_CHAT_MODEL")
+    # The visual role is local-only. Empty reuses OLLAMA_CHAT_MODEL; Ollama's
+    # /api/show declaration must still confirm the model's vision capability.
+    VISUAL_INPUT_ENABLED: bool = Field(True, env="VISUAL_INPUT_ENABLED")
+    VISUAL_PROVIDER: str = Field("ollama", env="VISUAL_PROVIDER")
+    OLLAMA_VISION_MODEL: str = Field("", env="OLLAMA_VISION_MODEL")
+    VISUAL_MAX_IMAGE_BYTES: int = Field(
+        8 * 1024 * 1024, ge=1024, le=32 * 1024 * 1024, env="VISUAL_MAX_IMAGE_BYTES"
+    )
+    VISUAL_MAX_IMAGE_PIXELS: int = Field(
+        24_000_000, ge=1_000_000, le=100_000_000, env="VISUAL_MAX_IMAGE_PIXELS"
+    )
+    VISUAL_MAX_OUTPUT_TOKENS: int = Field(
+        900, ge=128, le=4096, env="VISUAL_MAX_OUTPUT_TOKENS"
+    )
+    # Auditory relay is also local-only. The initial verified transport accepts
+    # canonical 16 kHz mono 16-bit PCM WAV so duration and signal quality are exact.
+    AUDIO_INPUT_ENABLED: bool = Field(True, env="AUDIO_INPUT_ENABLED")
+    AUDIO_PROVIDER: str = Field("ollama", env="AUDIO_PROVIDER")
+    OLLAMA_AUDIO_MODEL: str = Field("", env="OLLAMA_AUDIO_MODEL")
+    AUDIO_MAX_BYTES: int = Field(
+        4 * 1024 * 1024, ge=1024, le=32 * 1024 * 1024, env="AUDIO_MAX_BYTES"
+    )
+    AUDIO_MAX_DURATION_SECONDS: float = Field(
+        60.0, gt=0.0, le=600.0, env="AUDIO_MAX_DURATION_SECONDS"
+    )
+    AUDIO_MAX_OUTPUT_TOKENS: int = Field(
+        800, ge=128, le=4096, env="AUDIO_MAX_OUTPUT_TOKENS"
+    )
     EMBEDDING_PROVIDER: str = Field("gemini", env="EMBEDDING_PROVIDER")
     OLLAMA_EMBEDDING_MODEL: str = Field("", env="OLLAMA_EMBEDDING_MODEL")
     OLLAMA_MAX_INTERACTIVE_REQUESTS: int = Field(1, env="OLLAMA_MAX_INTERACTIVE_REQUESTS")

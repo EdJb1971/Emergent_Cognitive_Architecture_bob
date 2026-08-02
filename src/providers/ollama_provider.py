@@ -25,6 +25,8 @@ class OllamaProvider:
         request_timeout_seconds: float = 90.0,
         num_ctx: Optional[int] = None,
         thinking: bool = False,
+        supports_images: bool = False,
+        supports_audio: bool = False,
     ):
         self.base_url = base_url.rstrip("/")
         self.model = model
@@ -32,17 +34,26 @@ class OllamaProvider:
         self.request_timeout_seconds = request_timeout_seconds
         self.num_ctx = num_ctx
         self.thinking = thinking
+        self.supports_images = supports_images
+        self.supports_audio = supports_audio
         self.capabilities = ProviderCapabilities(
             provider="ollama",
             model=model,
             is_local=True,
+            supports_images=supports_images,
+            supports_audio=supports_audio,
             supports_structured_output=True,
         )
 
     async def generate(self, request: ProviderRequest) -> ProviderResult:
-        if request.image_base64 or request.audio_base64:
+        if request.audio_base64 and not self.capabilities.supports_audio:
             raise LLMServiceException(
-                detail="The local text-only provider does not yet accept image or audio input.",
+                detail=f"Ollama model '{self.model}' has no verified audio capability.",
+                status_code=501,
+            )
+        if request.image_base64 and not self.capabilities.supports_images:
+            raise LLMServiceException(
+                detail=f"Ollama model '{self.model}' has no verified vision capability.",
                 status_code=501,
             )
 
@@ -129,6 +140,16 @@ class OllamaProvider:
             "think": self.thinking,
             "options": options,
         }
+        multimodal_inputs = []
+        if request.image_base64:
+            multimodal_inputs.append(request.image_base64)
+        if request.audio_base64:
+            # Ollama 0.32.x routes declared audio-capable WAV input through the
+            # multimodal `images` array. This behavior is live-probed in this repo;
+            # the public generate schema does not yet expose a separate audio field.
+            multimodal_inputs.append(request.audio_base64)
+        if multimodal_inputs:
+            payload["images"] = multimodal_inputs
         if request.structured_output_schema:
             payload["format"] = request.structured_output_schema
         elif request.response_json:
@@ -184,5 +205,11 @@ class OllamaProvider:
                 "prompt_tokens": body.get("prompt_eval_count", 0),
                 "completion_tokens": body.get("eval_count", 0),
             },
-            capability_evidence={"text": True, "embeddings": False, "json": bool(payload.get("format"))},
+            capability_evidence={
+                "text": True,
+                "images": bool(request.image_base64 and self.capabilities.supports_images),
+                "audio": bool(request.audio_base64 and self.capabilities.supports_audio),
+                "embeddings": False,
+                "json": bool(payload.get("format")),
+            },
         )

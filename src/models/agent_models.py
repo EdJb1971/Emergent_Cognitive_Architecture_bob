@@ -9,6 +9,8 @@ class PerceptionAnalysis(BaseModel):
     patterns: List[str] = Field(..., description="Recurring patterns or themes detected.")
     context_type: str = Field(..., description="Categorization of the input's context (e.g., 'question', 'statement', 'command', 'narrative').")
     keywords: List[str] = Field(..., description="Key terms extracted from the input.")
+    image_present: bool = False
+    audio_present: bool = False
     image_analysis: Optional[Dict[str, Any]] = Field(None, description="Analysis of the image provided by the user.")
     audio_analysis: Optional[Dict[str, Any]] = Field(None, description="Analysis of the audio provided by the user.")
 

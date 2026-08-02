@@ -1,5 +1,6 @@
 import logging
 import asyncio
+import inspect
 import time
 from typing import List, Dict, Any, Optional
 from uuid import UUID
@@ -29,6 +30,8 @@ from src.services.audio_input_processor import AudioInputProcessor
 from src.services.visual_input_processor import VisualInputProcessor
 from src.models.multimodal_models import AudioEvidence, SensoryEpisode, VisualEvidence
 from src.services.multisensory_binding_service import MultisensoryBindingService
+from src.services.predictive_perception_service import PredictivePerceptionService
+from src.models.predictive_models import PredictivePerceptionAssessment
 from src.services.cognitive_brain import CognitiveBrain
 from src.services.memory_service import MemoryService
 from src.services.background_task_queue import BackgroundTaskQueue
@@ -102,6 +105,7 @@ class OrchestrationService:
         research_calibration_ledger: Optional[ResearchCalibrationLedger] = None,
         emotional_salience_encoder: Optional[EmotionalSalienceEncoder] = None,
         multisensory_binding_service: Optional[MultisensoryBindingService] = None,
+        predictive_perception_service: Optional[PredictivePerceptionService] = None,
     ):
         self.perception_agent = perception_agent
         self.emotional_agent = emotional_agent
@@ -134,6 +138,9 @@ class OrchestrationService:
         self.emotional_salience_encoder = emotional_salience_encoder
         self.multisensory_binding_service = (
             multisensory_binding_service or MultisensoryBindingService()
+        )
+        self.predictive_perception_service = (
+            predictive_perception_service or PredictivePerceptionService()
         )
         self.sleep_cycle_coordinator = None
         self.autonomous_work_governor = None
@@ -260,6 +267,34 @@ class OrchestrationService:
                 audio_evidence=audio_evidence,
             )
         cognitive_cycle.metadata["sensory_episode"] = sensory_episode.model_dump(mode="json")
+
+        # Predictive coding is strictly observational in v1. Priors come only from
+        # completed STM cycles and are formed before current evidence comparison.
+        prior_cycles = await self._load_predictive_prior_cycles(user_request.user_id)
+        with timer.stage("predictive_perception_shadow"):
+            try:
+                predictive_assessment: PredictivePerceptionAssessment = (
+                    self.predictive_perception_service.assess(
+                        cycle_id=cognitive_cycle.cycle_id,
+                        sensory_episode=sensory_episode,
+                        prior_cycles=prior_cycles,
+                        current_text=user_request.input_text or "",
+                        visual_evidence=visual_evidence,
+                        audio_evidence=audio_evidence,
+                    )
+                )
+            except Exception as error:
+                logger.exception(
+                    "Predictive shadow assessment degraded without affecting cycle: %s",
+                    error,
+                )
+                predictive_assessment = self.predictive_perception_service.degraded_assessment(
+                    cycle_id=cognitive_cycle.cycle_id,
+                    sensory_episode_id=sensory_episode.episode_id,
+                )
+        cognitive_cycle.metadata["predictive_perception"] = (
+            predictive_assessment.model_dump(mode="json")
+        )
 
         # Record cognitive cycle start metric after input processing
         if self.metrics_service:
@@ -473,6 +508,38 @@ class OrchestrationService:
                 user_id=str(user_request.user_id),
                 telemetry_event_type="sensory_episode_bound",
                 source_reference=f"sensory_episode:{sensory_episode.episode_id}",
+            )
+            await self.metrics_service.record_metric(
+                MetricType.PERCEPTUAL_EVENT,
+                {
+                    "modality": "predictive_perception",
+                    "status": predictive_assessment.assessment_status,
+                    "degradation_reason": predictive_assessment.degradation_reason,
+                    "schema_version": predictive_assessment.schema_version,
+                    "shadow_mode": True,
+                    "prior_cycle_count": len(predictive_assessment.prior_cycle_ids),
+                    "hypothesis_count": predictive_assessment.hypothesis_count,
+                    "matched_count": predictive_assessment.matched_count,
+                    "mismatch_count": predictive_assessment.mismatch_count,
+                    "unobserved_count": predictive_assessment.unobserved_count,
+                    "low_reliability_count": predictive_assessment.low_reliability_count,
+                    "material_error_count": predictive_assessment.material_error_count,
+                    "recommendation_action": (
+                        predictive_assessment.recommendation.action
+                        if predictive_assessment.recommendation else None
+                    ),
+                    "response_influenced": False,
+                    "routing_influenced": False,
+                    "research_invoked": False,
+                    "learning_update_applied": False,
+                    "primary_evidence_rewritten": False,
+                },
+                cycle_id=str(cognitive_cycle.cycle_id),
+                user_id=str(user_request.user_id),
+                telemetry_event_type="predictive_perception_assessed",
+                source_reference=(
+                    f"predictive_assessment:{predictive_assessment.assessment_id}"
+                ),
             )
 
         # --- Stage 1: Foundational Agents (with selective activation) ---
@@ -1357,6 +1424,28 @@ class OrchestrationService:
             )
 
         return cognitive_cycle
+
+    async def _load_predictive_prior_cycles(self, user_id: UUID) -> tuple[CognitiveCycle, ...]:
+        """Read bounded completed STM cycles without triggering semantic retrieval."""
+        if not self.predictive_perception_service.enabled:
+            return ()
+        try:
+            stm = await self.memory_service.get_stm(user_id)
+            getter = getattr(stm, "get_recent_cycles", None) if stm else None
+            if not callable(getter):
+                return ()
+            cycles = getter(limit=self.predictive_perception_service.max_prior_cycles)
+            if inspect.isawaitable(cycles):
+                cycles = await cycles
+            if not isinstance(cycles, (list, tuple)):
+                return ()
+            return tuple(
+                cycle for cycle in cycles
+                if isinstance(cycle, CognitiveCycle) and cycle.user_id == user_id
+            )[: self.predictive_perception_service.max_prior_cycles]
+        except Exception as error:
+            logger.warning("Predictive prior loading degraded safely: %s", error)
+            return ()
 
     def _derive_attention_motifs(
         self,

@@ -60,6 +60,7 @@ from src.services.autonomous_work_store import AutonomousWorkStore
 from src.services.audio_input_processor import AudioInputProcessor
 from src.services.visual_input_processor import VisualInputProcessor
 from src.services.multisensory_binding_service import MultisensoryBindingService
+from src.services.predictive_perception_service import PredictivePerceptionService
 from src.providers import ModelExecutionScheduler, OllamaProbe
 from src.providers.factory import (
     build_active_provider,
@@ -524,6 +525,18 @@ async def lifespan(app: FastAPI):
         app.state.multisensory_binding_service = MultisensoryBindingService(
             max_alignment_skew_seconds=settings.MULTISENSORY_MAX_ALIGNMENT_SKEW_SECONDS,
         )
+        app.state.predictive_perception_service = PredictivePerceptionService(
+            enabled=settings.PREDICTIVE_PERCEPTION_ENABLED,
+            shadow_mode=settings.PREDICTIVE_PERCEPTION_SHADOW_MODE,
+            max_prior_cycles=settings.PREDICTIVE_PERCEPTION_MAX_PRIOR_CYCLES,
+            max_hypotheses=settings.PREDICTIVE_PERCEPTION_MAX_HYPOTHESES,
+            min_observation_reliability=(
+                settings.PREDICTIVE_PERCEPTION_MIN_OBSERVATION_RELIABILITY
+            ),
+            clarification_threshold=(
+                settings.PREDICTIVE_PERCEPTION_CLARIFICATION_THRESHOLD
+            ),
+        )
 
         app.state.discovery_agent = DiscoveryAgent(
             llm_service=app.state.llm_service,
@@ -583,6 +596,7 @@ async def lifespan(app: FastAPI):
             research_calibration_ledger=app.state.research_calibration_ledger,
             emotional_salience_encoder=app.state.emotional_salience_encoder,
             multisensory_binding_service=app.state.multisensory_binding_service,
+            predictive_perception_service=app.state.predictive_perception_service,
         )
         logger.info("OrchestrationService (Central Agent) initialized successfully with Phase 1 & 2 Brain Architecture services.")
 
@@ -1991,6 +2005,16 @@ async def deep_health_check_endpoint(request_obj: Request):
         health_status["components"]["multisensory_binding"] = {
             "status": "unavailable",
             "message": f"Multisensory binding status failed: {e}",
+        }
+
+    try:
+        predictive_status = request_obj.app.state.predictive_perception_service.status()
+        predictive_status["status"] = "healthy"
+        health_status["components"]["predictive_perception"] = predictive_status
+    except Exception as e:
+        health_status["components"]["predictive_perception"] = {
+            "status": "unavailable",
+            "message": f"Predictive perception status failed: {e}",
         }
 
     try:

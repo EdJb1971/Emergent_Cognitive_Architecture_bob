@@ -269,6 +269,74 @@ async def test_sensory_episode_telemetry_is_typed_and_content_free(
     assert calls[0].kwargs["source_reference"] == (
         f"sensory_episode:{cycle.metadata['sensory_episode']['episode_id']}"
     )
+    predictive_calls = [
+        item for item in metrics.record_metric.await_args_list
+        if item.kwargs.get("telemetry_event_type") == "predictive_perception_assessed"
+    ]
+    assert len(predictive_calls) == 1
+    predictive_payload = predictive_calls[0].args[1]
+    assert predictive_payload["shadow_mode"] is True
+    assert predictive_payload["response_influenced"] is False
+    assert predictive_payload["routing_influenced"] is False
+    assert predictive_payload["research_invoked"] is False
+    assert predictive_payload["learning_update_applied"] is False
+    assert "private" not in str(predictive_payload).lower()
+
+
+@pytest.mark.asyncio
+async def test_orchestration_records_prior_prediction_error_without_affecting_response(
+    orchestration_service,
+    mock_memory_service,
+):
+    user_id = uuid4()
+    prior = CognitiveCycle(
+        user_id=user_id, session_id=uuid4(), user_input="The car is red.",
+        final_response="Prior response",
+    )
+    stm = MagicMock()
+    stm.get_recent_cycles.return_value = [prior]
+    mock_memory_service.get_stm.return_value = stm
+
+    cycle = await orchestration_service.orchestrate_cycle(
+        UserRequest(
+            user_id=user_id, session_id=uuid4(), input_text="The car is blue.",
+        )
+    )
+
+    assessment = cycle.metadata["predictive_perception"]
+    assert assessment["schema_version"] == "predictive-perception-v1"
+    assert assessment["mismatch_count"] >= 1
+    assert assessment["material_error_count"] >= 1
+    assert assessment["recommendation"]["action"] == "ask_user"
+    assert assessment["recommendation"]["executed"] is False
+    assert assessment["response_influenced"] is False
+    assert assessment["routing_influenced"] is False
+    assert assessment["research_invoked"] is False
+    assert assessment["learning_update_applied"] is False
+    assert cycle.final_response == "Mock final response"
+
+
+@pytest.mark.asyncio
+async def test_predictive_shadow_failure_degrades_without_failing_waking_cycle(
+    orchestration_service,
+):
+    orchestration_service.predictive_perception_service.assess = MagicMock(
+        side_effect=RuntimeError("shadow evaluator failed")
+    )
+
+    cycle = await orchestration_service.orchestrate_cycle(
+        UserRequest(
+            user_id=uuid4(), session_id=uuid4(), input_text="Keep the waking cycle alive.",
+        )
+    )
+
+    assessment = cycle.metadata["predictive_perception"]
+    assert assessment["assessment_status"] == "degraded"
+    assert assessment["degradation_reason"] == "assessment_failed"
+    assert assessment["hypotheses"] == []
+    assert assessment["prediction_errors"] == []
+    assert assessment["response_influenced"] is False
+    assert cycle.final_response == "Mock final response"
 
 @pytest.mark.asyncio
 async def test_orchestrate_cycle_agent_failure(orchestration_service, mock_agents, mock_cognitive_brain, mock_memory_service):

@@ -28,6 +28,7 @@ Neuroscience-inspired multi-agent platform that forms habits, switches strategie
 - **Dynamic attention controller**: A feature-flagged ACC/Thalamus hybrid detects drift, emits excitatory/inhibitory signals, adjusts Stage 2 token budgets, and propagates attention motifs through Working Memory.
 - **Theory of Mind with validation**: Predictions about user mental states are auto-validated against actual behavior, with confidence adjusting based on accuracy.
 - **Immutable multisensory binding**: Same-turn text, image, and audio evidence is temporally aligned with conservative agreement/conflict detection and reliability-aware advisory attention; primary observations are never generatively rewritten.
+- **Shadow predictive perception**: Prior-only, permanently labelled hypotheses are compared with immutable sensory evidence to produce signed errors and bounded clarification/recapture recommendations without changing observations or behavior.
 
 ---
 
@@ -44,6 +45,7 @@ Neuroscience-inspired multi-agent platform that forms habits, switches strategie
 | AutobiographicalMemory | Hippocampus | Episodic/semantic memory separation |
 | EmotionalSalienceEncoder | Amygdala | Emotional importance tagging |
 | MultisensoryBindingService | Thalamus/Association Cortex | Same-turn temporal binding and advisory conflict attention |
+| PredictivePerceptionService | Predictive Cortex | Prior-labelled hypotheses, immutable errors, shadow clarification |
 
 ---
 
@@ -144,6 +146,8 @@ Chat image attachments now use the local visual sensory path. JPEG and PNG uploa
 
 Chat audio attachments use the equivalent local auditory relay. Uploads must be 16 kHz mono 16-bit PCM WAV; microphone recordings are resampled and encoded to that format in the browser. The backend independently checks base64, RIFF structure, MIME, byte size, duration, channel/rate/depth, and simple signal quality before a capability-verified local Ollama model sees the clip. Raw audio is then removed. Transcripts and sound labels are provenance-marked untrusted evidence and are never appended to the user's instruction text. There is no cloud audio fallback.
 
+Every turn also runs a deterministic predictive-perception assessment in enforced shadow mode. It forms bounded hypotheses from recent same-user context before reading the current episode, labels each as a prior rather than an observation, and records immutable matches, mismatches, or unresolved checks. Any clarification or image/audio recapture is a review-only recommendation: it is not shown or executed and cannot affect the response, routing, research, learning, or primary evidence.
+
 ### Configuration & Feature Flags
 
 | Flag | Location | Purpose |
@@ -177,6 +181,12 @@ Chat audio attachments use the equivalent local auditory relay. Uploads must be 
 | `AUDIO_MAX_BYTES` | `.env` | Decoded PCM WAV limit (default: 4 MiB) |
 | `AUDIO_MAX_DURATION_SECONDS` | `.env` | Clip duration limit (default: 60 seconds) |
 | `MULTISENSORY_MAX_ALIGNMENT_SKEW_SECONDS` | `.env` | Same-turn text/image/audio binding window (default: 120 seconds) |
+| `PREDICTIVE_PERCEPTION_ENABLED` | `.env` | Compute bounded predictive assessments (default: true) |
+| `PREDICTIVE_PERCEPTION_SHADOW_MODE` | `.env` | Enforced safety posture; v1 rejects false rather than activating influence |
+| `PREDICTIVE_PERCEPTION_MAX_PRIOR_CYCLES` | `.env` | Maximum recent same-user cycles considered (default: 3) |
+| `PREDICTIVE_PERCEPTION_MAX_HYPOTHESES` | `.env` | Maximum labelled prior hypotheses per turn (default: 8) |
+| `PREDICTIVE_PERCEPTION_MIN_OBSERVATION_RELIABILITY` | `.env` | Reliability floor for calibratable comparisons (default: 0.55) |
+| `PREDICTIVE_PERCEPTION_CLARIFICATION_THRESHOLD` | `.env` | Minimum bounded surprise for a material mismatch (default: 0.50) |
 | `STM_TOKEN_BUDGET` | `.env` | Short-term memory token limit (default: 25000) |
 | `CONSOLIDATION_INTERVAL_MINUTES` | `.env` | Memory consolidation frequency (default: 30) |
 

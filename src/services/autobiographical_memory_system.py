@@ -152,6 +152,27 @@ class AutobiographicalMemorySystem:
                 "primary_evidence_rewritten": False,
                 "raw_media_retained": False,
             }
+        predictive = cycle.metadata.get("predictive_perception")
+        if isinstance(predictive, dict):
+            recommendation = predictive.get("recommendation")
+            sensory_details["predictive_perception"] = {
+                "assessment_id": predictive.get("assessment_id"),
+                "schema_version": predictive.get("schema_version"),
+                "assessment_status": predictive.get("assessment_status"),
+                "shadow_mode": True,
+                "hypothesis_count": int(predictive.get("hypothesis_count", 0)),
+                "matched_count": int(predictive.get("matched_count", 0)),
+                "mismatch_count": int(predictive.get("mismatch_count", 0)),
+                "material_error_count": int(predictive.get("material_error_count", 0)),
+                "recommendation_action": (
+                    recommendation.get("action") if isinstance(recommendation, dict) else None
+                ),
+                "response_influenced": False,
+                "routing_influenced": False,
+                "research_invoked": False,
+                "learning_update_applied": False,
+                "primary_evidence_rewritten": False,
+            }
         
         episode = EpisodicMemory(
             episode_id=episode_id,

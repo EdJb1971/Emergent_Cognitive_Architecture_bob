@@ -50,6 +50,7 @@ class MetricType(Enum):
     SALIENCE_ASSESSMENT = "salience_assessment"
     SLEEP_CYCLE = "sleep_cycle"
     RESEARCH_EVENT = "research_event"
+    PREDICTIVE_CALIBRATION = "predictive_calibration"
     AUTONOMOUS_WORK = "autonomous_work"
 
 
@@ -376,6 +377,39 @@ class MetricsService:
             source_reference=f"autonomous_ledger:{event.sequence}",
         )
 
+    async def record_predictive_event(self, event: Any) -> None:
+        """Project a committed predictive-ledger event without semantic content."""
+        assessment = event.payload.get("assessment", {})
+        label = event.payload.get("label", {})
+        recommendation = assessment.get("recommendation") or {}
+        await self.record_metric(
+            MetricType.PREDICTIVE_CALIBRATION,
+            {
+                "ledger_sequence": event.sequence,
+                "assessment_id": str(event.assessment_id),
+                "error_id": str(event.error_id) if event.error_id else None,
+                "assessment_status": assessment.get("assessment_status"),
+                "hypothesis_count": assessment.get("hypothesis_count"),
+                "mismatch_count": assessment.get("mismatch_count"),
+                "material_error_count": assessment.get("material_error_count"),
+                "recommendation_action": recommendation.get("action"),
+                "prediction_outcome": label.get("prediction_outcome"),
+                "recommendation_verdict": label.get("recommendation_verdict"),
+                "shadow_mode": True,
+                "response_influenced": False,
+                "routing_influenced": False,
+                "research_invoked": False,
+                "learning_update_applied": False,
+                "primary_evidence_rewritten": False,
+                "predictive_influence_eligible": False,
+            },
+            cycle_id=str(event.cycle_id),
+            user_id=str(event.user_id),
+            telemetry_event_type=event.event_type.value,
+            correlation_id=str(event.assessment_id),
+            source_reference=f"predictive_ledger:{event.sequence}",
+        )
+
     def subscribe(
         self,
         *,
@@ -484,6 +518,8 @@ class MetricsService:
             return TelemetryDomain.SLEEP
         if metric_type == MetricType.RESEARCH_EVENT:
             return TelemetryDomain.RESEARCH
+        if metric_type == MetricType.PREDICTIVE_CALIBRATION:
+            return TelemetryDomain.PREDICTIVE
         if metric_type == MetricType.AUTONOMOUS_WORK:
             return TelemetryDomain.AUTONOMOUS_WORK
         return TelemetryDomain.COGNITIVE

@@ -120,6 +120,7 @@ export type TelemetryDomain =
   | 'cognitive'
   | 'memory'
   | 'research'
+  | 'predictive'
   | 'salience'
   | 'sleep'
   | 'autonomous_work'

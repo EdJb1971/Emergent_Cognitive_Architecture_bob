@@ -83,6 +83,10 @@ class Settings(BaseSettings):
         le=1.0,
         env="PREDICTIVE_PERCEPTION_CLARIFICATION_THRESHOLD",
     )
+    PREDICTIVE_CALIBRATION_DB_PATH: str = Field(
+        "./chroma_db/predictive_calibration.sqlite3",
+        env="PREDICTIVE_CALIBRATION_DB_PATH",
+    )
     EMBEDDING_PROVIDER: str = Field("gemini", env="EMBEDDING_PROVIDER")
     OLLAMA_EMBEDDING_MODEL: str = Field("", env="OLLAMA_EMBEDDING_MODEL")
     OLLAMA_MAX_INTERACTIVE_REQUESTS: int = Field(1, env="OLLAMA_MAX_INTERACTIVE_REQUESTS")

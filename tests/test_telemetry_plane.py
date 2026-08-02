@@ -5,10 +5,12 @@ import pytest
 
 from src.models.autonomous_work_models import AutonomousEventType, AutonomousTaskType
 from src.models.research_models import ResearchLedgerEventType
+from src.models.predictive_models import PredictivePerceptionAssessment
 from src.models.telemetry_models import TelemetryDomain
 from src.services.autonomous_work_store import AutonomousWorkStore
 from src.services.metrics_service import MetricType, MetricsService
 from src.services.research_calibration_ledger import ResearchCalibrationLedger
+from src.services.predictive_calibration_store import PredictiveCalibrationStore
 
 
 async def make_metrics(monkeypatch, *, replay_size=32, queue_size=8):
@@ -146,3 +148,39 @@ async def test_authoritative_ledgers_project_minimal_live_events(monkeypatch, tm
     assert "question" not in research_message["data"]["payload"]
     await autonomous.close()
     await research.close()
+
+
+@pytest.mark.asyncio
+async def test_predictive_ledger_projects_content_free_typed_telemetry(monkeypatch, tmp_path):
+    metrics = await make_metrics(monkeypatch)
+    user_id = uuid4()
+    assessment = PredictivePerceptionAssessment(
+        assessment_id=uuid4(),
+        cycle_id=uuid4(),
+        sensory_episode_id=uuid4(),
+        enabled=False,
+        assessment_status="disabled",
+        hypothesis_count=0,
+        matched_count=0,
+        mismatch_count=0,
+        unobserved_count=0,
+        low_reliability_count=0,
+        material_error_count=0,
+    )
+    predictive = PredictiveCalibrationStore(
+        tmp_path / "predictive.sqlite3",
+        event_sink=metrics.record_predictive_event,
+    )
+    await predictive.connect()
+    subscription, _ = metrics.subscribe(replay_limit=0)
+
+    await predictive.record_assessment(assessment, user_id=user_id)
+
+    message = await subscription.next_message()
+    assert message["data"]["domain"] == "predictive"
+    assert message["data"]["event_type"] == "assessment_recorded"
+    assert message["data"]["source_reference"] == "predictive_ledger:1"
+    assert message["data"]["payload"]["shadow_mode"] is True
+    assert message["data"]["payload"]["predictive_influence_eligible"] is False
+    assert "assessment" not in message["data"]["payload"]
+    await predictive.close()

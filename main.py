@@ -50,6 +50,7 @@ from src.services.inquiry_review_service import InquiryReviewService
 from src.services.research_runtime_control import ResearchRuntimeControl
 from src.api.research_review import router as research_review_router
 from src.api.autonomous_work import router as autonomous_work_router
+from src.api.predictive_review import router as predictive_review_router
 from src.models.autonomous_work_models import (
     AutonomousProviderPolicy,
     AutonomousTaskPolicy,
@@ -61,6 +62,7 @@ from src.services.audio_input_processor import AudioInputProcessor
 from src.services.visual_input_processor import VisualInputProcessor
 from src.services.multisensory_binding_service import MultisensoryBindingService
 from src.services.predictive_perception_service import PredictivePerceptionService
+from src.services.predictive_calibration_store import PredictiveCalibrationStore
 from src.providers import ModelExecutionScheduler, OllamaProbe
 from src.providers.factory import (
     build_active_provider,
@@ -537,6 +539,11 @@ async def lifespan(app: FastAPI):
                 settings.PREDICTIVE_PERCEPTION_CLARIFICATION_THRESHOLD
             ),
         )
+        app.state.predictive_calibration_store = PredictiveCalibrationStore(
+            settings.PREDICTIVE_CALIBRATION_DB_PATH,
+            event_sink=app.state.metrics_service.record_predictive_event,
+        )
+        await app.state.predictive_calibration_store.connect()
 
         app.state.discovery_agent = DiscoveryAgent(
             llm_service=app.state.llm_service,
@@ -597,6 +604,7 @@ async def lifespan(app: FastAPI):
             emotional_salience_encoder=app.state.emotional_salience_encoder,
             multisensory_binding_service=app.state.multisensory_binding_service,
             predictive_perception_service=app.state.predictive_perception_service,
+            predictive_calibration_store=app.state.predictive_calibration_store,
         )
         logger.info("OrchestrationService (Central Agent) initialized successfully with Phase 1 & 2 Brain Architecture services.")
 
@@ -728,6 +736,8 @@ async def lifespan(app: FastAPI):
         await app.state.inquiry_candidate_store.close()
     if getattr(app.state, "research_calibration_ledger", None):
         await app.state.research_calibration_ledger.close()
+    if getattr(app.state, "predictive_calibration_store", None):
+        await app.state.predictive_calibration_store.close()
     if getattr(app.state, "sleep_cycle_ledger", None):
         await app.state.sleep_cycle_ledger.close()
     if getattr(app.state, "research_service", None):
@@ -745,6 +755,7 @@ app = FastAPI(
 )
 app.include_router(research_review_router)
 app.include_router(autonomous_work_router)
+app.include_router(predictive_review_router)
 
 # For development, allow all origins. For production, this should be more restrictive.
 app.add_middleware(
@@ -2009,6 +2020,9 @@ async def deep_health_check_endpoint(request_obj: Request):
 
     try:
         predictive_status = request_obj.app.state.predictive_perception_service.status()
+        predictive_status["calibration"] = (
+            await request_obj.app.state.predictive_calibration_store.status()
+        )
         predictive_status["status"] = "healthy"
         health_status["components"]["predictive_perception"] = predictive_status
     except Exception as e:

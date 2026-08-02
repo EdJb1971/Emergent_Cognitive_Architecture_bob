@@ -31,6 +31,7 @@ from src.services.visual_input_processor import VisualInputProcessor
 from src.models.multimodal_models import AudioEvidence, SensoryEpisode, VisualEvidence
 from src.services.multisensory_binding_service import MultisensoryBindingService
 from src.services.predictive_perception_service import PredictivePerceptionService
+from src.services.predictive_calibration_store import PredictiveCalibrationStore
 from src.models.predictive_models import PredictivePerceptionAssessment
 from src.services.cognitive_brain import CognitiveBrain
 from src.services.memory_service import MemoryService
@@ -106,6 +107,7 @@ class OrchestrationService:
         emotional_salience_encoder: Optional[EmotionalSalienceEncoder] = None,
         multisensory_binding_service: Optional[MultisensoryBindingService] = None,
         predictive_perception_service: Optional[PredictivePerceptionService] = None,
+        predictive_calibration_store: Optional[PredictiveCalibrationStore] = None,
     ):
         self.perception_agent = perception_agent
         self.emotional_agent = emotional_agent
@@ -142,6 +144,7 @@ class OrchestrationService:
         self.predictive_perception_service = (
             predictive_perception_service or PredictivePerceptionService()
         )
+        self.predictive_calibration_store = predictive_calibration_store
         self.sleep_cycle_coordinator = None
         self.autonomous_work_governor = None
         self.session_start = datetime.utcnow()  # Track session start for contextual encoding
@@ -295,6 +298,23 @@ class OrchestrationService:
         cognitive_cycle.metadata["predictive_perception"] = (
             predictive_assessment.model_dump(mode="json")
         )
+        cognitive_cycle.metadata["predictive_calibration_recorded"] = False
+        if self.predictive_calibration_store:
+            try:
+                with timer.stage("predictive_assessment_persist"):
+                    predictive_event = await self.predictive_calibration_store.record_assessment(
+                        predictive_assessment,
+                        user_id=user_request.user_id,
+                    )
+                cognitive_cycle.metadata["predictive_calibration_recorded"] = True
+                cognitive_cycle.metadata["predictive_calibration_ledger_sequence"] = (
+                    predictive_event.sequence
+                )
+            except Exception as error:
+                logger.exception(
+                    "Predictive assessment persistence degraded without affecting cycle: %s",
+                    error,
+                )
 
         # Record cognitive cycle start metric after input processing
         if self.metrics_service:

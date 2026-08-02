@@ -338,6 +338,51 @@ async def test_predictive_shadow_failure_degrades_without_failing_waking_cycle(
     assert assessment["response_influenced"] is False
     assert cycle.final_response == "Mock final response"
 
+
+@pytest.mark.asyncio
+async def test_predictive_assessment_is_persisted_without_influencing_waking_cycle(
+    orchestration_service,
+):
+    store = AsyncMock()
+    store.record_assessment.return_value = SimpleNamespace(sequence=17)
+    orchestration_service.predictive_calibration_store = store
+    user_id = uuid4()
+
+    cycle = await orchestration_service.orchestrate_cycle(
+        UserRequest(
+            user_id=user_id, session_id=uuid4(), input_text="Record this shadow assessment.",
+        )
+    )
+
+    persisted = store.record_assessment.await_args
+    assert persisted.kwargs["user_id"] == user_id
+    assert str(persisted.args[0].assessment_id) == cycle.metadata["predictive_perception"]["assessment_id"]
+    assert cycle.metadata["predictive_calibration_recorded"] is True
+    assert cycle.metadata["predictive_calibration_ledger_sequence"] == 17
+    assert cycle.metadata["predictive_perception"]["response_influenced"] is False
+    assert cycle.metadata["predictive_perception"]["learning_update_applied"] is False
+    assert cycle.final_response == "Mock final response"
+
+
+@pytest.mark.asyncio
+async def test_predictive_persistence_failure_does_not_fail_waking_cycle(
+    orchestration_service,
+):
+    store = AsyncMock()
+    store.record_assessment.side_effect = RuntimeError("ledger unavailable")
+    orchestration_service.predictive_calibration_store = store
+
+    cycle = await orchestration_service.orchestrate_cycle(
+        UserRequest(
+            user_id=uuid4(), session_id=uuid4(), input_text="Keep the response available.",
+        )
+    )
+
+    store.record_assessment.assert_awaited_once()
+    assert cycle.metadata["predictive_calibration_recorded"] is False
+    assert "predictive_calibration_ledger_sequence" not in cycle.metadata
+    assert cycle.final_response == "Mock final response"
+
 @pytest.mark.asyncio
 async def test_orchestrate_cycle_agent_failure(orchestration_service, mock_agents, mock_cognitive_brain, mock_memory_service):
     user_request = UserRequest(user_id=uuid4(), input_text="test input", session_id=uuid4())

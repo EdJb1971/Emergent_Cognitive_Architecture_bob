@@ -13,6 +13,7 @@ const domains: Array<{ id: TelemetryDomain; label: string; hint: string }> = [
   { id: 'cognitive', label: 'Cognition', hint: 'cycles & agents' },
   { id: 'memory', label: 'Memory', hint: 'retrieval & storage' },
   { id: 'research', label: 'Research', hint: 'decisions & packets' },
+  { id: 'predictive', label: 'Predictive', hint: 'assessments & labels' },
   { id: 'salience', label: 'Salience', hint: 'attention ranking' },
   { id: 'sleep', label: 'Sleep', hint: 'consolidation runs' },
   { id: 'autonomous_work', label: 'Autonomy', hint: 'governed work' },
@@ -37,6 +38,12 @@ const eventSummary = (event: TelemetryEvent): string => {
   }
   if (event.domain === 'research') {
     return payload.inquiry_id ? `Inquiry ${String(payload.inquiry_id).slice(0, 8)}` : 'Research control event';
+  }
+  if (event.domain === 'predictive') {
+    if (event.event_type === 'calibration_label') {
+      return payload.error_id ? `Error ${String(payload.error_id).slice(0, 8)} reviewed` : 'Recommendation reviewed';
+    }
+    return `${Number(payload.hypothesis_count || 0)} hypotheses · ${Number(payload.material_error_count || 0)} material`;
   }
   return event.cycle_id ? `Cycle ${event.cycle_id.slice(0, 8)}` : 'Operational signal';
 };

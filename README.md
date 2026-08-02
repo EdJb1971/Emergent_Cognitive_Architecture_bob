@@ -140,7 +140,9 @@ Vite binds to `127.0.0.1:3000` and proxies `/api`, `/chat`, and `/ws` to the loc
 
 Open the control room with **Ctrl+K** and select **Autonomy** to pause/resume all autonomous work, toggle each cognitive category, inspect its operating limits, cancel/retry tasks, and verify the immutable executive ledger. UI changes persist across restarts. Sleep can be started or stopped from this view without restarting the backend.
 
-Select **System** for the live event-driven observability plane. It displays authenticated typed signals for cognition, memory, research, salience, sleep, and governed autonomous work. The browser resumes from its last process cursor after a transient disconnect and reports any replay/backpressure gap explicitly; telemetry is observational, while ChromaDB and the domain ledgers remain authoritative.
+Select **Predictive** for the shadow perception review and calibration plane. Review every prior beside the primary observation that tested it, append independent hypothesis/observation/outcome/action judgements, inspect daily coverage and confidence reliability, compare diagnostic cohorts, and verify the immutable ledger. Corrections append rather than overwrite. The interface permanently shows the enforced influence lock because calibration evidence cannot activate attention or learning.
+
+Select **System** for the live event-driven observability plane. It displays authenticated typed signals for cognition, memory, research, predictive calibration, salience, sleep, and governed autonomous work. The browser resumes from its last process cursor after a transient disconnect and reports any replay/backpressure gap explicitly; telemetry is observational, while ChromaDB and the domain ledgers remain authoritative.
 
 Chat image attachments now use the local visual sensory path. JPEG and PNG uploads are checked for base64 integrity, content/MIME agreement, byte size, dimensions, and pixel count before Ollama sees them. Raw pixels are discarded after that one local observation stage; downstream agents and memory receive only typed, provenance-marked, explicitly untrusted evidence. The path has no Gemini fallback and reports itself unavailable when Ollama has not declared `vision` for the configured model.
 
@@ -187,6 +189,7 @@ Every turn also runs a deterministic predictive-perception assessment in enforce
 | `PREDICTIVE_PERCEPTION_MAX_HYPOTHESES` | `.env` | Maximum labelled prior hypotheses per turn (default: 8) |
 | `PREDICTIVE_PERCEPTION_MIN_OBSERVATION_RELIABILITY` | `.env` | Reliability floor for calibratable comparisons (default: 0.55) |
 | `PREDICTIVE_PERCEPTION_CLARIFICATION_THRESHOLD` | `.env` | Minimum bounded surprise for a material mismatch (default: 0.50) |
+| `PREDICTIVE_CALIBRATION_DB_PATH` | `.env` | Separate append-only predictive assessment/label SQLite ledger |
 | `STM_TOKEN_BUDGET` | `.env` | Short-term memory token limit (default: 25000) |
 | `CONSOLIDATION_INTERVAL_MINUTES` | `.env` | Memory consolidation frequency (default: 30) |
 

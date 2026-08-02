@@ -14,6 +14,7 @@ class TelemetryDomain(str, Enum):
     COGNITIVE = "cognitive"
     MEMORY = "memory"
     RESEARCH = "research"
+    PREDICTIVE = "predictive"
     SALIENCE = "salience"
     SLEEP = "sleep"
     AUTONOMOUS_WORK = "autonomous_work"
@@ -54,4 +55,3 @@ class TelemetryHello(BaseModel):
     oldest_sequence: int
     latest_sequence: int
     domains: list[TelemetryDomain]
-

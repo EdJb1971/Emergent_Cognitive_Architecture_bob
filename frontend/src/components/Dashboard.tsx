@@ -8,19 +8,21 @@ import {
   FiDatabase,
   FiInbox,
   FiGitBranch,
+  FiTarget,
   FiShield,
   FiX,
 } from 'react-icons/fi';
 import ResearchCommandCenter, { ResearchView } from 'components/ResearchCommandCenter';
 import AutonomousWorkCenter from 'components/AutonomousWorkCenter';
 import SystemTelemetry from 'components/SystemTelemetry';
+import PredictiveCalibrationCenter from 'components/PredictiveCalibrationCenter';
 
 interface DashboardProps {
   isOpen: boolean;
   onClose: () => void;
 }
 
-type View = ResearchView | 'autonomy' | 'system';
+type View = ResearchView | 'autonomy' | 'predictive' | 'system';
 
 const nav: Array<{ id: View; label: string; description: string; icon: React.ReactNode }> = [
   { id: 'command', label: 'Command', description: 'Research posture', icon: <FiCommand /> },
@@ -28,6 +30,7 @@ const nav: Array<{ id: View; label: string; description: string; icon: React.Rea
   { id: 'inquiries', label: 'Inquiries', description: 'Waking review', icon: <FiInbox /> },
   { id: 'calibration', label: 'Calibration', description: 'Shadow evidence', icon: <FiBarChart2 /> },
   { id: 'ledger', label: 'Ledger', description: 'Immutable history', icon: <FiBookOpen /> },
+  { id: 'predictive', label: 'Predictive', description: 'Perception calibration', icon: <FiTarget /> },
   { id: 'system', label: 'System', description: 'Cognitive telemetry', icon: <FiCpu /> },
 ];
 
@@ -71,7 +74,7 @@ const Dashboard: React.FC<DashboardProps> = ({ isOpen, onClose }) => {
           <button onClick={onClose} aria-label="Close operator console"><span>Return to conversation</span><FiX /></button>
         </header>
         <div className="operator-content">
-          {view === 'autonomy' ? <AutonomousWorkCenter /> : view !== 'system' ? <ResearchCommandCenter view={view} /> : <SystemTelemetry />}
+          {view === 'autonomy' ? <AutonomousWorkCenter /> : view === 'predictive' ? <PredictiveCalibrationCenter /> : view !== 'system' ? <ResearchCommandCenter view={view} /> : <SystemTelemetry />}
         </div>
       </main>
     </div>

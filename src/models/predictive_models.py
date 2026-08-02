@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Literal, Optional, Tuple
+from enum import Enum
+from typing import Dict, List, Literal, Optional, Tuple
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -245,3 +246,186 @@ class PredictivePerceptionAssessment(BaseModel):
         ):
             raise ValueError("disabled/degraded assessment cannot contain predictive work")
         return self
+
+
+class PredictiveLedgerEventType(str, Enum):
+    ASSESSMENT_RECORDED = "assessment_recorded"
+    CALIBRATION_LABEL = "calibration_label"
+
+
+class PredictiveReviewStatus(str, Enum):
+    UNREVIEWED = "unreviewed"
+    PARTIALLY_REVIEWED = "partially_reviewed"
+    REVIEWED = "reviewed"
+    NOT_APPLICABLE = "not_applicable"
+
+
+class HypothesisVerdict(str, Enum):
+    CORRECT = "correct"
+    INCORRECT = "incorrect"
+    UNCERTAIN = "uncertain"
+    NOT_REVIEWED = "not_reviewed"
+
+
+class ObservationQualityVerdict(str, Enum):
+    RELIABLE = "reliable"
+    UNRELIABLE = "unreliable"
+    INSUFFICIENT = "insufficient"
+    UNCERTAIN = "uncertain"
+    NOT_REVIEWED = "not_reviewed"
+
+
+class PredictionOutcomeVerdict(str, Enum):
+    CONFIRMED_MATCH = "confirmed_match"
+    CONFIRMED_MISMATCH = "confirmed_mismatch"
+    FALSE_CONFLICT = "false_conflict"
+    MISSED_MISMATCH = "missed_mismatch"
+    INDETERMINATE = "indeterminate"
+
+
+class RecommendationVerdict(str, Enum):
+    USEFUL = "useful"
+    UNNECESSARY = "unnecessary"
+    WRONG_ACTION = "wrong_action"
+    NOT_APPLICABLE = "not_applicable"
+    UNCERTAIN = "uncertain"
+
+
+class PredictivePreferredAction(str, Enum):
+    NONE = "none"
+    ASK_USER = "ask_user"
+    REQUEST_IMAGE_RECAPTURE = "request_image_recapture"
+    REQUEST_AUDIO_RECAPTURE = "request_audio_recapture"
+
+
+class PredictiveCalibrationLabelRequest(BaseModel):
+    """Independent human judgement appended without changing its target."""
+
+    error_id: Optional[UUID] = None
+    hypothesis_verdict: HypothesisVerdict = HypothesisVerdict.NOT_REVIEWED
+    observation_quality: ObservationQualityVerdict = (
+        ObservationQualityVerdict.NOT_REVIEWED
+    )
+    prediction_outcome: PredictionOutcomeVerdict = (
+        PredictionOutcomeVerdict.INDETERMINATE
+    )
+    recommendation_verdict: RecommendationVerdict = (
+        RecommendationVerdict.NOT_APPLICABLE
+    )
+    preferred_action: PredictivePreferredAction = PredictivePreferredAction.NONE
+    outcome_known: bool = True
+    rationale: str = Field(min_length=1, max_length=2000)
+
+    @model_validator(mode="after")
+    def _scope_is_consistent(self) -> "PredictiveCalibrationLabelRequest":
+        if self.error_id is None and (
+            self.hypothesis_verdict != HypothesisVerdict.NOT_REVIEWED
+            or self.observation_quality != ObservationQualityVerdict.NOT_REVIEWED
+            or self.prediction_outcome != PredictionOutcomeVerdict.INDETERMINATE
+        ):
+            raise ValueError(
+                "hypothesis, observation, and prediction-outcome labels require error_id"
+            )
+        return self
+
+
+class PredictiveLedgerEvent(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    sequence: int = Field(ge=1)
+    event_id: UUID
+    event_type: PredictiveLedgerEventType
+    user_id: UUID
+    cycle_id: UUID
+    assessment_id: UUID
+    error_id: Optional[UUID] = None
+    created_at: datetime
+    payload: Dict[str, object] = Field(default_factory=dict)
+    previous_hash: str = Field(min_length=64, max_length=64)
+    event_hash: str = Field(min_length=64, max_length=64)
+
+
+class PredictiveAssessmentReview(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    assessment: PredictivePerceptionAssessment
+    recorded_at: datetime
+    ledger_sequence: int = Field(ge=1)
+    review_status: PredictiveReviewStatus
+    review_target_count: int = Field(ge=0)
+    reviewed_target_count: int = Field(ge=0)
+    latest_labels: Tuple[PredictiveLedgerEvent, ...] = ()
+
+
+class PredictiveAssessmentListResponse(BaseModel):
+    assessments: List[PredictiveAssessmentReview] = Field(default_factory=list)
+    count: int = Field(ge=0)
+
+
+class PredictiveLedgerResponse(BaseModel):
+    events: List[PredictiveLedgerEvent] = Field(default_factory=list)
+    count: int = Field(ge=0)
+    next_after_sequence: Optional[int] = None
+
+
+class PredictiveCalibrationStratum(BaseModel):
+    observations: int = Field(ge=0)
+    labeled: int = Field(ge=0)
+    predicted_mismatch: int = Field(ge=0)
+    confirmed_mismatch: int = Field(ge=0)
+    false_conflict: int = Field(ge=0)
+    missed_mismatch: int = Field(ge=0)
+    hypothesis_correct: int = Field(ge=0)
+    hypothesis_incorrect: int = Field(ge=0)
+    recommendation_reviewed: int = Field(ge=0)
+    recommendation_useful: int = Field(ge=0)
+
+
+class PredictiveConfidenceBin(BaseModel):
+    label: str
+    lower_bound: float = Field(ge=0.0, le=1.0)
+    upper_bound: float = Field(ge=0.0, le=1.0)
+    count: int = Field(ge=0)
+    average_confidence: Optional[float] = Field(None, ge=0.0, le=1.0)
+    empirical_accuracy: Optional[float] = Field(None, ge=0.0, le=1.0)
+    absolute_gap: Optional[float] = Field(None, ge=0.0, le=1.0)
+
+
+class PredictiveCalibrationDay(BaseModel):
+    date: str
+    assessments: int = Field(ge=0)
+    errors: int = Field(ge=0)
+    labeled_errors: int = Field(ge=0)
+    material_errors: int = Field(ge=0)
+    confirmed_mismatches: int = Field(ge=0)
+    false_conflicts: int = Field(ge=0)
+    label_coverage: float = Field(ge=0.0, le=1.0)
+    false_conflict_rate: Optional[float] = Field(None, ge=0.0, le=1.0)
+
+
+class PredictiveCalibrationSummary(BaseModel):
+    assessments: int = Field(ge=0)
+    actionable_assessments: int = Field(ge=0)
+    labeled_assessments: int = Field(ge=0)
+    assessment_label_coverage: float = Field(ge=0.0, le=1.0)
+    errors: int = Field(ge=0)
+    labeled_errors: int = Field(ge=0)
+    error_label_coverage: float = Field(ge=0.0, le=1.0)
+    material_errors: int = Field(ge=0)
+    mismatch_confusion_matrix: Dict[str, int]
+    mismatch_precision: Optional[float] = Field(None, ge=0.0, le=1.0)
+    mismatch_recall: Optional[float] = Field(None, ge=0.0, le=1.0)
+    false_conflict_rate: Optional[float] = Field(None, ge=0.0, le=1.0)
+    hypothesis_accuracy: Optional[float] = Field(None, ge=0.0, le=1.0)
+    observation_reliable_rate: Optional[float] = Field(None, ge=0.0, le=1.0)
+    recommendation_usefulness_rate: Optional[float] = Field(None, ge=0.0, le=1.0)
+    preferred_action_agreement: Optional[float] = Field(None, ge=0.0, le=1.0)
+    expected_calibration_error: Optional[float] = Field(None, ge=0.0, le=1.0)
+    assessment_status_counts: Dict[str, int]
+    recommendation_counts: Dict[str, int]
+    strata: Dict[str, PredictiveCalibrationStratum]
+    confidence_bins: List[PredictiveConfidenceBin]
+    daily: List[PredictiveCalibrationDay]
+    ledger_integrity_verified: bool
+    predictive_influence_eligible: Literal[False] = False
+    eligibility_reason: str

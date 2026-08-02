@@ -5,11 +5,12 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, Iterable, Optional
+from typing import Any, Awaitable, Callable, Iterable, Optional
 from uuid import UUID, uuid4
 
 from src.models.autonomous_work_models import (
@@ -24,15 +25,21 @@ from src.models.autonomous_work_models import (
 
 
 _GENESIS_HASH = "0" * 64
+logger = logging.getLogger(__name__)
 
 
 class AutonomousWorkStore:
     """SQLite operational state plus a database-protected immutable event chain."""
 
-    def __init__(self, path: str | Path) -> None:
+    def __init__(
+        self,
+        path: str | Path,
+        event_sink: Optional[Callable[[AutonomousLedgerEvent], Awaitable[None]]] = None,
+    ) -> None:
         self.path = Path(path)
         self._lock = asyncio.Lock()
         self._connected = False
+        self._event_sink = event_sink
 
     async def connect(self) -> None:
         await asyncio.to_thread(self._initialize_sync)
@@ -94,9 +101,15 @@ class AutonomousWorkStore:
     ) -> AutonomousLedgerEvent:
         self._require_connected()
         async with self._lock:
-            return await asyncio.to_thread(
+            event = await asyncio.to_thread(
                 self._append_event_sync, event_type, user_id, payload, task_id, task_type
             )
+        if self._event_sink:
+            try:
+                await self._event_sink(event)
+            except Exception:
+                logger.warning("Autonomous telemetry projection failed", exc_info=True)
+        return event
 
     async def list_events(
         self, user_id: UUID, *, after_sequence: int = 0, limit: int = 100

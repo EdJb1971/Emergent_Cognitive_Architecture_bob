@@ -1,5 +1,13 @@
 import axios from 'axios';
-import { DashboardMetrics, HistoricalData } from 'types/dashboard';
+import {
+  DashboardMetrics,
+  HistoricalData,
+  TelemetryConnectionState,
+  TelemetryDomain,
+  TelemetryEvent,
+  TelemetryGap,
+  TelemetryHello,
+} from 'types/dashboard';
 import { API_BASE_URL, API_KEY, WS_BASE_URL } from './config';
 
 export const getDashboardMetrics = async (): Promise<DashboardMetrics> => {
@@ -81,37 +89,119 @@ export const getDashboardCorrelations = async (hours: number = 24, userId?: stri
   }
 };
 
-// WebSocket connection for real-time updates
-export const createDashboardWebSocket = (onMessage: (data: any) => void, onError?: (error: Event) => void): WebSocket => {
-  const wsUrl = `${WS_BASE_URL}/ws/dashboard`;
+interface TelemetryCallbacks {
+  onSnapshot: (data: DashboardMetrics) => void;
+  onEvent: (event: TelemetryEvent) => void;
+  onGap: (gap: TelemetryGap) => void;
+  onStateChange: (state: TelemetryConnectionState) => void;
+  onStreamReset?: () => void;
+  domains?: TelemetryDomain[];
+}
 
-  const ws = new WebSocket(wsUrl);
+export interface DashboardTelemetryConnection {
+  close: () => void;
+}
 
-  ws.onopen = () => {
-    console.log('Dashboard WebSocket connected');
+const cursorKey = 'eca.telemetry.cursor.v1';
+
+const encodeProtocolCredential = (value: string): string => {
+  const bytes = new TextEncoder().encode(value);
+  let binary = '';
+  bytes.forEach((byte) => { binary += String.fromCharCode(byte); });
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+};
+
+/** Resumable WebSocket client with bounded exponential reconnect backoff. */
+export const connectDashboardTelemetry = (callbacks: TelemetryCallbacks): DashboardTelemetryConnection => {
+  let stopped = false;
+  let socket: WebSocket | null = null;
+  let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  let attempts = 0;
+  let currentStream = '';
+  let lastSequence = 0;
+
+  try {
+    const stored = JSON.parse(sessionStorage.getItem(cursorKey) || '{}');
+    currentStream = typeof stored.streamId === 'string' ? stored.streamId : '';
+    lastSequence = Number.isInteger(stored.sequence) ? stored.sequence : 0;
+  } catch {
+    sessionStorage.removeItem(cursorKey);
+  }
+
+  const saveCursor = () => sessionStorage.setItem(
+    cursorKey,
+    JSON.stringify({ streamId: currentStream, sequence: lastSequence }),
+  );
+
+  const scheduleReconnect = () => {
+    if (stopped || reconnectTimer) return;
+    callbacks.onStateChange('reconnecting');
+    const base = Math.min(15000, 500 * (2 ** Math.min(attempts, 5)));
+    const delay = Math.round(base * (0.8 + Math.random() * 0.4));
+    attempts += 1;
+    reconnectTimer = setTimeout(() => {
+      reconnectTimer = null;
+      connect();
+    }, delay);
   };
 
-  ws.onmessage = (event) => {
-    try {
-      const data = JSON.parse(event.data);
-      onMessage(data);
-    } catch (error) {
-      console.error('Failed to parse WebSocket message:', error);
-    }
+  const connect = () => {
+    if (stopped) return;
+    callbacks.onStateChange(attempts ? 'reconnecting' : 'connecting');
+    const params = new URLSearchParams({ after: String(lastSequence), replay: '100' });
+    if (callbacks.domains?.length) params.set('domains', callbacks.domains.join(','));
+    const protocols = ['eca.telemetry.v1'];
+    if (API_KEY) protocols.push(`auth.${encodeProtocolCredential(API_KEY)}`);
+    socket = new WebSocket(`${WS_BASE_URL}/ws/dashboard?${params}`, protocols);
+
+    socket.onopen = () => {
+      attempts = 0;
+      callbacks.onStateChange('live');
+    };
+    socket.onmessage = (message) => {
+      try {
+        const envelope = JSON.parse(message.data);
+        if (envelope.type === 'hello') {
+          const hello = envelope.data as TelemetryHello;
+          if (currentStream && currentStream !== hello.stream_id && lastSequence) {
+            currentStream = hello.stream_id;
+            lastSequence = 0;
+            saveCursor();
+            callbacks.onStreamReset?.();
+            socket?.close(4000, 'stream changed; resubscribe');
+            return;
+          }
+          currentStream = hello.stream_id;
+          saveCursor();
+        } else if (envelope.type === 'snapshot') {
+          callbacks.onSnapshot(envelope.data as DashboardMetrics);
+        } else if (envelope.type === 'event') {
+          const event = envelope.data as TelemetryEvent;
+          if (event.sequence > lastSequence) {
+            lastSequence = event.sequence;
+            saveCursor();
+            callbacks.onEvent(event);
+          }
+        } else if (envelope.type === 'gap') {
+          callbacks.onGap(envelope.data as TelemetryGap);
+        }
+      } catch (error) {
+        console.error('Invalid dashboard telemetry envelope:', error);
+      }
+    };
+    socket.onerror = () => socket?.close();
+    socket.onclose = () => scheduleReconnect();
   };
 
-  ws.onerror = (error) => {
-    console.error('Dashboard WebSocket error:', error);
-    if (onError) {
-      onError(error);
-    }
+  connect();
+  return {
+    close: () => {
+      stopped = true;
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      socket?.close(1000, 'operator view closed');
+      callbacks.onStateChange('closed');
+    },
   };
-
-  ws.onclose = () => {
-    console.log('Dashboard WebSocket disconnected');
-  };
-
-  return ws;
 };
 
 // Statistical Analysis APIs

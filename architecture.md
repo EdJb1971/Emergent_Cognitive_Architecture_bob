@@ -18,7 +18,7 @@ This document describes the Emergent Cognitive Architecture (ECA), a brain-inspi
 | Attention controller | Implemented, default inactive | It uses lightweight heuristics. It emits directives before Stage 1 and after Stage 1; routing changes only when `ATTENTION_CONTROLLER_ENABLED=true` and `ATTENTION_CONTROLLER_SHADOW_MODE=false`. |
 | Memory consolidation / sleep | Implemented, governed, default disabled | `SleepCycleCoordinator` owns idle signal generation; the unified governor owns execution. When enabled initially by `SLEEP_CYCLE_ENABLED` or later through the Autonomy UI, genuine idle time, cooldown, local-provider policy, and global/per-user de-duplication gate a bounded episodic-to-semantic, replay, and pattern pipeline. New user activity cancels in-flight work. Every coordinator/job outcome is written to the executive ledger and a more detailed sleep ledger. Disabled mode creates no scheduler task. |
 | Autonomous executive control | Implemented; initiative categories default disabled | `AutonomousWorkGovernor` is the single admission and execution authority for sleep, reflection, discovery, curiosity, self-assessment, proactive engagement, summary updates, and STM flushes. Every task uses one durable contract with trigger/signals, de-duplication key, local-only provider policy, priority, timeout, rate/concurrency limits, bounded retry, result, and cancellation state. Foreground activity preempts interruptible work. SQLite persists tasks and runtime toggles; a database-protected append-only SHA-256 chain audits all decisions and outcomes. Summary/STM housekeeping defaults on; all initiative-producing categories default off. |
-| Metrics/dashboard | Research and autonomy operations implemented; metric streaming partial | The responsive React operator console renders research runtime controls, inquiry review, calibration labeling/strata, verified-source feedback, autonomous master/category controls, bounded-task history/actions, both hash-chained audit surfaces, and system telemetry. Metrics ChromaDB initialization is asynchronous and not awaited at startup. The WebSocket sends an initial snapshot then waits for client messages; broadcast updates are not implemented. |
+| Metrics/dashboard | Event-driven observability implemented | The responsive React operator console renders research and autonomy controls plus a live typed neural-activity feed. Cognitive-cycle, memory, research, salience, sleep, and governed autonomous-work events share one bounded process-local stream with schema/version, stream identity, monotonic cursor, domain/event type, correlation IDs, and authoritative source references. Authenticated WebSocket clients receive snapshot, cursor replay, live events, heartbeats, and explicit gap messages; reconnect uses bounded exponential backoff. Slow viewers cannot block cognition. ChromaDB and domain ledgers remain authoritative rather than the telemetry stream. Metrics ChromaDB initialization remains asynchronous and can fall back to memory-only analytics. |
 | Multimodal input | Partial | Audio transcription is wired into the cycle. `VisualInputProcessor` exists but is not wired into application startup or the cognitive cycle. |
 | Provider selection | Implemented, configuration-driven | `build_active_provider()` in `src/providers/factory.py` resolves generation, embedding, moderation, and synthesis independently. Mixed selections are composed by `CompositeProvider`; a uniform selection returns the single adapter. Unknown values fail startup. |
 | End-to-end cycle | Verified running | First real `/chat` cycles completed on August 1, 2026. Fully local: 103s. Local agents with Gemini synthesis: 44.8s first turn, 66.8s with memory context. Memory recall across turns confirmed (name and detail correctly retrieved from a prior cycle). |
@@ -34,7 +34,7 @@ This document describes the Emergent Cognitive Architecture (ECA), a brain-inspi
 | Application memory scoring | Repaired and live-verified | The primary collections use Chroma's default squared-L2 distance, but `MemoryService` previously applied a discontinuous cosine-style conversion: a closer `0.865` result scored `0.135` while a worse `1.088` result scored `0.479`. Metric-aware conversion now maps normalized L2 vectors onto cosine-comparable scores. A matched live query changed from zero Cognitive Brain memories and a failed clarification to three LTM memories and correct recall of Tom and Leeds. |
 | Research escalation | Complete guarded round trip, review surface, and runtime control plane; disabled/shadowed by default | `CognitiveResearchDrive` combines bounded uncertainty, conflict, novelty/prediction error, volatility, stakes, persistence, expected information gain, privacy/cost inhibition, hysteresis, and cooldown. `InquiryCandidateStore` durably de-duplicates waking/reflection/dream inquiries and tracks waking review, approval, success, and retryable failure. The operator UI and authenticated APIs list, inspect, approve, dismiss, and retry inquiries. `WakingInquiryService` can resolve locally, defer, require user approval, or cross both the cognitive and policy gates. `GeminiGroundedResearchProvider` uses Google Search grounding and accepts only URL-annotated claims; `ResearchService` independently validates IDs, provider identity, question-only context, URLs, source references, and bounds. Cognitive Brain receives only verified packets and emits deterministic source links. A database-enforced append-only, hash-chained ledger captures reviews, policy decisions, packets, source feedback, calibration labels, and runtime changes. Provider access, active control, and automatic non-explicit research are separately interlocked UI toggles; the final transition requires typed confirmation, and emergency stop disables all three. State is restored from the ledger after restart. Defaults remain provider-disabled, controller-shadowed, and explicit-approval-required. |
 | Salience network | Implemented, default disabled/shadowed; advisory only | `SalienceNetwork` produces a deterministic alternative ranking after MemoryAgent retrieval from bounded query relevance, recency, emotional salience, novelty, goal alignment, and must-keep signals. It preserves the complete baseline order, records scores/contributions/reasons in cycle metadata and metrics, and can expose compact Working Memory hints only when enabled outside shadow mode. It never prunes a memory. Consolidation jobs retain the unchanged baseline selection plus a replay-order advisory. |
-| Validation | Repaired baseline | The repository virtual environment runs `186 passed, 3 skipped` on August 2, 2026. The suite now includes governed-work API/runtime control, rejection, de-duplication, retry, waking cancellation, restart-persistent controls, local-provider enforcement, immutable ledger protection, governed-sleep lifecycle/recovery, provenance, and a real ephemeral-Chroma semantic round trip. The React production build passes TypeScript checking and compiles with Vite `8.2.0`, Node `v24.18.1`, and npm `11.16.0`; `npm audit` reports zero vulnerabilities. Desktop and responsive operator layouts were rendered against the live local API before the toolchain migration, and the migrated Vite runtime/proxy completed an authenticated live API smoke; the new autonomy view has compile/build validation but not a fresh interactive visual pass. The research-drive fixture has 20 reviewed synthetic cases and measures action accuracy `1.000`, escalation precision `1.000`, and escalation recall `1.000`. A guarded live Gemini smoke test returned 2 verified claims from 2 URL sources after 2 searches in `5567.7ms`. This is a deterministic regression and connectivity baseline, not proof of real-world calibration or biological equivalence. The three skipped root-level async tests are not collected by an async test plugin. |
+| Validation | Repaired baseline | The repository virtual environment runs `191 passed, 3 skipped` on August 2, 2026. The suite now includes authenticated telemetry WebSocket rejection/acceptance, typed domain mapping, cursor replay, stale-cursor and subscriber-backpressure gaps, post-commit ledger projection, governed-work control, governed-sleep lifecycle/recovery, provenance, and a real ephemeral-Chroma semantic round trip. The React production build passes TypeScript checking and compiles with Vite `8.2.0`, Node `v24.18.1`, and npm `11.16.0`; `npm audit` reports zero vulnerabilities. The Vite proxy completed live REST and WebSocket smokes (`hello`, `snapshot`, `event`) with no listeners left running afterward. The in-app browser runtime exposed no available browser, so the new System workspace has compile/build and live transport validation but not a fresh screenshot-based visual pass. The research-drive fixture has 20 reviewed synthetic cases and measures action accuracy `1.000`, escalation precision `1.000`, and escalation recall `1.000`. A guarded live Gemini smoke test returned 2 verified claims from 2 URL sources after 2 searches in `5567.7ms`. This is a deterministic regression and connectivity baseline, not proof of real-world calibration or biological equivalence. The three skipped root-level async tests are not collected by an async test plugin. |
 
 The phase sections below retain the design intent. Treat statements about autonomous background execution, measured performance improvements, or real-time streaming as planned unless this status section explicitly marks them implemented.
 
@@ -1234,7 +1234,7 @@ performance_data = {
 
 **Telemetry & Testing:**
 - Deterministic tests cover bounded scores, stable tie-breaking, aware/naive timestamp handling, must-keep priority, unchanged waking order, shadow non-influence, compact active hints, and unchanged consolidation selection.
-- The full suite passes with `186 passed, 3 skipped`.
+- The full suite passes with `191 passed, 3 skipped`.
 - Application-level fixture comparison and user outcome labels for focus/conciseness remain required before pruning can be designed or authorized.
 
 **Configuration:** `SALIENCE_NETWORK_ENABLED=false` by default. When enabled, `SALIENCE_NETWORK_SHADOW_MODE=true` records decisions without prompt influence; setting shadow mode false permits compact advisory hints, still without pruning. `SALIENCE_NETWORK_TOP_K` defaults to `3`, and `SALIENCE_RECENCY_HALF_LIFE_DAYS` defaults to `30`.
@@ -2195,7 +2195,7 @@ AgentOutput(
 
 ## Scientific Dashboard & Metrics System
 
-The ECA includes a dashboard and metrics service for inspecting cognitive events and research-oriented analysis. **Runtime status:** REST endpoints and an initial WebSocket snapshot exist. **Operational limitation:** Continuous real-time broadcasting and validated emergence/learning evaluation are not implemented.
+The ECA includes a dashboard and metrics service for inspecting cognitive events and research-oriented analysis. **Runtime status:** REST analytics and authenticated event-driven WebSocket telemetry are implemented. **Operational limitation:** telemetry is a bounded process-local projection rather than a durable event store, and the higher-order emergence/learning measures still require longitudinal validation.
 
 ### Architecture Overview
 
@@ -2241,14 +2241,17 @@ The ECA includes a dashboard and metrics service for inspecting cognitive events
 
 **Core Components:**
 - **MetricsService:** One concrete service that stores an in-memory event buffer, rolling aggregates, and a ChromaDB collection.
+- **TelemetrySubscription:** Per-viewer bounded queue with domain filtering, cursor replay, and explicit backpressure gaps.
+- **Typed event envelope:** Schema version, process stream ID, monotonic sequence, domain, event type, timestamps, correlation IDs, and authoritative source references.
 - **Statistical helpers:** Methods on `MetricsService` for analysis, learning curves, group comparison, and research report generation.
 
 **Key Features:**
-- **Instrumentation in selected services** such as orchestration, memory, attention, and learning paths
+- **Typed instrumentation** for cognitive cycles/agents, memory, research governance, salience, sleep, and governed autonomous work
 - **Structured storage** with ChromaDB for historical analysis
-- **WebSocket initial snapshot**; continuous broadcast is not implemented
+- **Live authenticated WebSocket delivery** with snapshot, replay, events, heartbeat, gap, and reconnect semantics
 - **REST API endpoints** for historical data retrieval
 - **In-memory buffer and retention settings**; ChromaDB collection initialization is asynchronous and may fall back to memory-only metrics on failure
+- **Source-of-truth boundary:** research and autonomous events are projected only after their immutable ledger append succeeds, and carry ledger references instead of full sensitive bodies
 
 #### Integration Points
 
@@ -2295,7 +2298,7 @@ metrics_service.record_skill_improvement(
 - `GET /api/dashboard/export/report` - Research report generation
 
 #### WebSocket Endpoint
-- `WebSocket /ws/dashboard` - Sends an initial metrics snapshot and remains connected; server-side live update broadcasting is planned.
+- `WebSocket /ws/dashboard?after=<cursor>&replay=<count>&domains=<csv>` - Authenticated telemetry subscription. It returns `hello`, `snapshot`, `event`, `heartbeat`, and `gap` envelopes. Same-origin development authenticates through the server-side Vite proxy; direct browser deployments use the versioned WebSocket subprotocol credential rather than a query-string secret.
 
 ### Scientific Evaluation Metrics
 
@@ -2376,30 +2379,11 @@ The ECA includes advanced statistical analysis and research export capabilities 
 - Daily aggregates: 1 year
 - Monthly aggregates: Indefinite
 
-### Planned Real-time Streaming Architecture
+### Real-time Streaming Semantics
 
-**WebSocket Implementation:**
-```python
-# Backend broadcasting
-await websocket_manager.broadcast({
-    "type": "metrics_update",
-    "data": current_metrics,
-    "timestamp": datetime.utcnow()
-})
-```
+`MetricsService` keeps a bounded replay deque and a separate bounded queue per subscriber. Publishing is synchronous and non-blocking: if a viewer falls behind, only that viewer's oldest projection is evicted and its next envelope is an explicit `subscriber_backpressure` gap. A reconnect supplies its last processed cursor and receives available events after that cursor. If the cursor predates the replay window, the server reports `cursor_older_than_replay_window`; the UI explains that durable domain data is intact. A new process creates a new stream ID, causing the browser to clear the stale cursor and resubscribe from the new stream.
 
-**Frontend Subscription:**
-```typescript
-// Real-time updates
-useEffect(() => {
-    const ws = createDashboardWebSocket();
-    ws.onmessage = (event) => {
-        const data = JSON.parse(event.data);
-        updateMetrics(data);
-    };
-    return () => ws.close();
-}, []);
-```
+The telemetry payload is deliberately a compact observation. It cannot authorize research, schedule autonomous work, alter salience, or write memory. SQLite ledgers, ChromaDB collections, and domain stores remain the only sources of truth.
 
 ### Dashboard User Experience
 
@@ -2467,6 +2451,7 @@ The frontend is a responsive React 18 and TypeScript single-page application bui
 #### Scientific Dashboard Components
 *   **`Dashboard.tsx`:** Full-screen operator shell with Command, Inquiries, Calibration, Ledger, and System sections
 *   **`ResearchCommandCenter.tsx`:** Interlocked provider/controller/automation toggles, typed activation confirmation, emergency stop, waking inquiry decisions, independent shadow labels, editable verified-source reviews, calibration strata, and append-only ledger history
+*   **`SystemTelemetry.tsx`:** Live connection/cursor health, six-domain activity map, explicit gap warnings, ordered event feed, and agent activation projection
 *   **`StatisticalAnalysis.tsx`:** Advanced statistical analysis tools with research export capabilities (CSV/JSON), significance testing, and automated report generation
 *   **`MetricsCard.tsx`:** Reusable component for displaying key performance indicators with trend indicators
 *   **`RealTimeChart.tsx`:** Canvas-based performance visualization with multiple metric overlays
@@ -2476,15 +2461,15 @@ The frontend is a responsive React 18 and TypeScript single-page application bui
 #### API Layer
 *   **`api/config.ts`:** Defaults browser traffic to the same-origin Vite proxy; direct-backend mode is explicit and local-only
 *   **`api/chatApi.ts`:** Chat communication module using patched Axios with authenticated requests
-*   **`api/dashboardApi.ts`:** Dashboard metrics API with WebSocket connections and REST endpoints
+*   **`api/dashboardApi.ts`:** Dashboard analytics REST client plus authenticated resumable WebSocket client with stream-reset detection and bounded reconnect backoff
 *   **`api/researchApi.ts`:** Authenticated typed client for runtime controls, inquiry review, source feedback, calibration labels/summaries, and ledger history
 
 ### Dashboard Integration
 
-The operator console opens from the chat header, `Ctrl/Cmd+K`, or the `?control` deep link. It supports REST-based governance and metric views; live metric broadcasting remains planned. The retired Create React App dependency graph is no longer present: Vite, Axios, PostCSS, UUID, TypeScript, and Vitest are current and `npm audit` reports zero findings. Key features include:
+The operator console opens from the chat header, `Ctrl/Cmd+K`, or the `?control` deep link. It supports REST-based governance plus live event-driven cognitive telemetry. The retired Create React App dependency graph is no longer present: Vite, Axios, PostCSS, UUID, TypeScript, and Vitest are current and `npm audit` reports zero findings. Key features include:
 
-- **Initial WebSocket snapshot**; continuous server-side metric broadcasts are not implemented
-- **Configurable refresh intervals** (1s to 60s)
+- **Authenticated typed WebSocket stream** with initial snapshot, bounded replay, heartbeat, gap visibility, and automatic reconnect
+- **Six-domain live activity surface** for cognition, memory, research, salience, sleep, and autonomous work
 - **Full-screen operational overlay** with desktop sidebar and compact mobile navigation
 - **Ledger-restored runtime posture** with staged activation and immediate containment controls
 - **Responsive design** optimized for both desktop and mobile viewing

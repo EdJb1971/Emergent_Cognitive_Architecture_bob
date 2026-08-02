@@ -1,7 +1,10 @@
 import logging
+import base64
+import secrets
+import asyncio
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request, Response, status, HTTPException, Query, Path, Depends, WebSocket
+from fastapi import FastAPI, Request, Response, status, HTTPException, Query, Path, Depends, WebSocket, WebSocketDisconnect
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, PlainTextResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -21,6 +24,7 @@ from src.services.background_task_queue import BackgroundTaskQueue
 from src.services.self_reflection_discovery_engine import SelfReflectionAndDiscoveryEngine
 from src.services.proactive_engagement_service import ProactiveEngagementEngine, ProactiveMessage
 from src.services.metrics_service import MetricsService, MetricType
+from src.models.telemetry_models import TelemetryDomain
 from src.services.reinforcement_learning_service import ReinforcementLearningService
 from src.models.core_models import (
     UserRequest, AgentOutput, CognitiveCycle, MemoryQueryRequest, MemoryQueryResponse,
@@ -112,7 +116,11 @@ async def lifespan(app: FastAPI):
 
         # Initialize MetricsService for comprehensive tracking with ChromaDB persistence
         # Reuse the ChromaDB client from MemoryService to avoid conflicts
-        app.state.metrics_service = MetricsService(chroma_client=app.state.memory_service.client)
+        app.state.metrics_service = MetricsService(
+            chroma_client=app.state.memory_service.client,
+            telemetry_replay_size=settings.TELEMETRY_REPLAY_SIZE,
+            telemetry_subscriber_queue_size=settings.TELEMETRY_SUBSCRIBER_QUEUE_SIZE,
+        )
         logger.info("MetricsService initialized for dashboard analytics with ChromaDB persistence.")
 
         # Wire MetricsService into MemoryService now that it's created
@@ -220,7 +228,10 @@ async def lifespan(app: FastAPI):
         logger.info("TheoryOfMindService initialized successfully.")
 
         # Initialize the single executive-control plane before any background producer.
-        app.state.autonomous_work_store = AutonomousWorkStore(settings.AUTONOMOUS_WORK_DB_PATH)
+        app.state.autonomous_work_store = AutonomousWorkStore(
+            settings.AUTONOMOUS_WORK_DB_PATH,
+            event_sink=app.state.metrics_service.record_autonomous_event,
+        )
         await app.state.autonomous_work_store.connect()
         default_timeout = settings.AUTONOMOUS_DEFAULT_TIMEOUT_SECONDS
         default_retries = settings.AUTONOMOUS_DEFAULT_MAX_RETRIES
@@ -301,7 +312,10 @@ async def lifespan(app: FastAPI):
         )
         app.state.inquiry_candidate_store = InquiryCandidateStore(settings.INQUIRY_DB_PATH)
         await app.state.inquiry_candidate_store.connect()
-        app.state.research_calibration_ledger = ResearchCalibrationLedger(settings.INQUIRY_DB_PATH)
+        app.state.research_calibration_ledger = ResearchCalibrationLedger(
+            settings.INQUIRY_DB_PATH,
+            event_sink=app.state.metrics_service.record_research_event,
+        )
         await app.state.research_calibration_ledger.connect()
         from src.services.sleep_cycle_ledger import SleepCycleLedger
         app.state.sleep_cycle_ledger = SleepCycleLedger(settings.SLEEP_LEDGER_DB_PATH)
@@ -1477,37 +1491,95 @@ async def get_dashboard_correlations(
 
 @app.websocket("/ws/dashboard")
 async def dashboard_websocket_endpoint(websocket: WebSocket):
-    """
-    WebSocket endpoint for real-time dashboard updates and live metrics streaming.
-    """
-    metrics_service: MetricsService = websocket.app.state.metrics_service
+    """Authenticated, resumable, bounded live telemetry subscription."""
+    metrics_service: Optional[MetricsService] = getattr(
+        websocket.app.state, "metrics_service", None
+    )
     if not metrics_service:
-        await websocket.close(code=1011)  # Internal server error
+        await websocket.close(code=1011)
         return
 
-    await websocket.accept()
-    logger.info("Dashboard WebSocket connection established.")
+    # Browsers cannot set arbitrary WebSocket headers. Same-origin Vite proxying
+    # supplies X-API-Key; direct deployments can carry a base64url credential in
+    # the WebSocket subprotocol list without placing it in a query string.
+    supplied_key = websocket.headers.get(settings.API_KEY_HEADER_NAME)
+    requested_protocols = [
+        item.strip()
+        for item in websocket.headers.get("sec-websocket-protocol", "").split(",")
+        if item.strip()
+    ]
+    if not supplied_key:
+        encoded = next(
+            (item.removeprefix("auth.") for item in requested_protocols if item.startswith("auth.")),
+            None,
+        )
+        if encoded:
+            try:
+                supplied_key = base64.urlsafe_b64decode(encoded + "=" * (-len(encoded) % 4)).decode()
+            except (ValueError, UnicodeDecodeError):
+                supplied_key = None
+    if not supplied_key or not secrets.compare_digest(supplied_key, settings.API_KEY):
+        await websocket.close(code=4401, reason="authentication required")
+        return
 
     try:
-        # Send initial data
+        after_sequence = max(0, int(websocket.query_params.get("after", "0")))
+        replay_limit = min(
+            metrics_service.telemetry_subscriber_queue_size,
+            max(0, int(websocket.query_params.get("replay", "100"))),
+        )
+        raw_domains = websocket.query_params.get("domains", "")
+        domains = (
+            [TelemetryDomain(item.strip()) for item in raw_domains.split(",") if item.strip()]
+            if raw_domains else list(TelemetryDomain)
+        )
+    except (ValueError, TypeError):
+        await websocket.close(code=4400, reason="invalid telemetry subscription")
+        return
+
+    subscription, replay_gap = metrics_service.subscribe(
+        after_sequence=after_sequence,
+        domains=domains,
+        replay_limit=replay_limit,
+    )
+    selected_protocol = "eca.telemetry.v1" if "eca.telemetry.v1" in requested_protocols else None
+    try:
+        await websocket.accept(subprotocol=selected_protocol)
+        logger.info(
+            "Dashboard telemetry subscriber connected (after=%s, domains=%s).",
+            after_sequence,
+            [domain.value for domain in domains],
+        )
+        hello = metrics_service.telemetry_hello(domains)
+        await websocket.send_json({"type": "hello", "data": hello.model_dump(mode="json")})
         initial_data = await metrics_service.get_dashboard_data()
-        await websocket.send_json({"type": "initial", "data": initial_data})
-
-        # Keep connection alive for future real-time updates
-        # TODO: Implement real-time metrics subscription when needed
+        await websocket.send_json({
+            "type": "snapshot",
+            "sequence": hello.latest_sequence,
+            "data": initial_data,
+        })
+        if replay_gap:
+            await websocket.send_json({"type": "gap", "data": replay_gap.model_dump(mode="json")})
         while True:
-            # Wait for client messages or keep-alive
             try:
-                message = await websocket.receive_text()
-                logger.debug(f"Received WebSocket message: {message}")
-            except Exception:
-                # Client disconnected
-                break
-
-    except Exception as e:
-        logger.error(f"Dashboard WebSocket error: {e}", exc_info=True)
+                message = await asyncio.wait_for(subscription.next_message(), timeout=15.0)
+                await websocket.send_json(message)
+            except asyncio.TimeoutError:
+                await websocket.send_json({
+                    "type": "heartbeat",
+                    "data": {
+                        "stream_id": str(metrics_service.telemetry_stream_id),
+                        "latest_sequence": metrics_service.telemetry_latest_sequence,
+                        "timestamp": datetime.utcnow().isoformat(),
+                    },
+                })
+    except (WebSocketDisconnect, RuntimeError):
+        pass
+    except Exception:
+        logger.warning("Dashboard telemetry WebSocket failed", exc_info=True)
     finally:
-        logger.info("Dashboard WebSocket connection closed.")
+        metrics_service.unsubscribe(subscription)
+        logger.info("Dashboard telemetry subscriber disconnected.")
 
 # ===== STATISTICAL ANALYSIS ENDPOINTS =====
 

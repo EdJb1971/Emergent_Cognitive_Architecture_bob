@@ -136,6 +136,8 @@ Vite binds to `127.0.0.1:3000` and proxies `/api`, `/chat`, and `/ws` to the loc
 
 Open the control room with **Ctrl+K** and select **Autonomy** to pause/resume all autonomous work, toggle each cognitive category, inspect its operating limits, cancel/retry tasks, and verify the immutable executive ledger. UI changes persist across restarts. Sleep can be started or stopped from this view without restarting the backend.
 
+Select **System** for the live event-driven observability plane. It displays authenticated typed signals for cognition, memory, research, salience, sleep, and governed autonomous work. The browser resumes from its last process cursor after a transient disconnect and reports any replay/backpressure gap explicitly; telemetry is observational, while ChromaDB and the domain ledgers remain authoritative.
+
 ### Configuration & Feature Flags
 
 | Flag | Location | Purpose |
@@ -156,6 +158,8 @@ Open the control room with **Ctrl+K** and select **Autonomy** to pause/resume al
 | `AUTONOMOUS_{SUMMARY,STM_FLUSH}_ENABLED` | `.env` | Initial memory-housekeeping posture (both default: true) |
 | `AUTONOMOUS_DEFAULT_TIMEOUT_SECONDS` | `.env` | Hard deadline per execution attempt (default: 300) |
 | `AUTONOMOUS_DEFAULT_MAX_RETRIES` | `.env` | Bounded automatic retry budget (default: 1) |
+| `TELEMETRY_REPLAY_SIZE` | `.env` | Process-local cursor replay window (default: 2000 events) |
+| `TELEMETRY_SUBSCRIBER_QUEUE_SIZE` | `.env` | Per-viewer non-blocking delivery buffer (default: 256 events) |
 | `STM_TOKEN_BUDGET` | `.env` | Short-term memory token limit (default: 25000) |
 | `CONSOLIDATION_INTERVAL_MINUTES` | `.env` | Memory consolidation frequency (default: 30) |
 

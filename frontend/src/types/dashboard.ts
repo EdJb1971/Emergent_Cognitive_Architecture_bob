@@ -116,6 +116,49 @@ export interface DashboardConfig {
   selectedMetrics: string[];
 }
 
+export type TelemetryDomain =
+  | 'cognitive'
+  | 'memory'
+  | 'research'
+  | 'salience'
+  | 'sleep'
+  | 'autonomous_work'
+  | 'system';
+
+export interface TelemetryEvent {
+  schema_version: 1;
+  sequence: number;
+  event_id: string;
+  domain: TelemetryDomain;
+  event_type: string;
+  occurred_at: string;
+  payload: Record<string, unknown>;
+  cycle_id?: string | null;
+  user_id?: string | null;
+  correlation_id?: string | null;
+  source_reference?: string | null;
+}
+
+export interface TelemetryHello {
+  schema_version: 1;
+  stream_id: string;
+  replay_capacity: number;
+  subscriber_queue_capacity: number;
+  oldest_sequence: number;
+  latest_sequence: number;
+  domains: TelemetryDomain[];
+}
+
+export interface TelemetryGap {
+  requested_after: number;
+  available_from: number;
+  latest_sequence: number;
+  dropped_for_subscriber: number;
+  reason: 'cursor_older_than_replay_window' | 'subscriber_backpressure' | string;
+}
+
+export type TelemetryConnectionState = 'connecting' | 'live' | 'reconnecting' | 'closed';
+
 // Mock data for development and testing
 export const createMockDashboardMetrics = (): DashboardMetrics => ({
   timestamp: new Date().toISOString(),

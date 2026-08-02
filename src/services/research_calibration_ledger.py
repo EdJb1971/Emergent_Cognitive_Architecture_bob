@@ -5,10 +5,11 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Optional, Sequence
+from typing import Any, Awaitable, Callable, Optional, Sequence
 from uuid import UUID, uuid4
 
 from src.models.research_models import (
@@ -23,6 +24,7 @@ from src.models.research_models import (
 
 
 _GENESIS_HASH = "0" * 64
+logger = logging.getLogger(__name__)
 
 
 def _utc_now() -> datetime:
@@ -32,10 +34,15 @@ def _utc_now() -> datetime:
 class ResearchCalibrationLedger:
     """Durable events that SQLite itself refuses to update or delete."""
 
-    def __init__(self, path: str | Path) -> None:
+    def __init__(
+        self,
+        path: str | Path,
+        event_sink: Optional[Callable[[ResearchLedgerEvent], Awaitable[None]]] = None,
+    ) -> None:
         self.path = Path(path)
         self._write_lock = asyncio.Lock()
         self._connected = False
+        self._event_sink = event_sink
 
     async def connect(self) -> None:
         await asyncio.to_thread(self._initialize_sync)
@@ -58,7 +65,7 @@ class ResearchCalibrationLedger:
     ) -> ResearchLedgerEvent:
         self._require_connected()
         async with self._write_lock:
-            return await asyncio.to_thread(
+            event = await asyncio.to_thread(
                 self._append_sync,
                 event_type,
                 user_id,
@@ -69,6 +76,12 @@ class ResearchCalibrationLedger:
                 decision_id,
                 request_id,
             )
+        if self._event_sink:
+            try:
+                await self._event_sink(event)
+            except Exception:
+                logger.warning("Research telemetry projection failed", exc_info=True)
+        return event
 
     async def record_assessment(
         self,

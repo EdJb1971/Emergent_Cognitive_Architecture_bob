@@ -99,6 +99,13 @@ class Settings(BaseSettings):
     LOG_LEVEL: str = "INFO"
     LOG_FILE_PATH: str = "./logs/app.log"
 
+    # Bounded process-local operator telemetry. Durable domain stores remain the
+    # source of truth and cursors intentionally reset with each process stream.
+    TELEMETRY_REPLAY_SIZE: int = Field(2000, ge=32, le=50000, env="TELEMETRY_REPLAY_SIZE")
+    TELEMETRY_SUBSCRIBER_QUEUE_SIZE: int = Field(
+        256, ge=8, le=5000, env="TELEMETRY_SUBSCRIBER_QUEUE_SIZE"
+    )
+
     # Phase 7 Feature Flags
     ATTENTION_CONTROLLER_ENABLED: bool = Field(False, env="ATTENTION_CONTROLLER_ENABLED")
     ATTENTION_CONTROLLER_SHADOW_MODE: bool = Field(True, env="ATTENTION_CONTROLLER_SHADOW_MODE")

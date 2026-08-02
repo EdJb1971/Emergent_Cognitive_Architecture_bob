@@ -17,13 +17,20 @@ from collections import defaultdict, deque
 from datetime import datetime, timedelta
 from dataclasses import asdict, dataclass
 from enum import Enum
-from typing import Any, Dict, List, Optional, Tuple
-from uuid import uuid4
+from typing import Any, Dict, Iterable, List, Optional, Tuple
+from uuid import UUID, uuid4
 
 import numpy as np
 from scipy import stats
 import chromadb
 from chromadb.config import Settings as ChromaSettings
+
+from src.models.telemetry_models import (
+    TelemetryDomain,
+    TelemetryEvent,
+    TelemetryGap,
+    TelemetryHello,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +48,8 @@ class MetricType(Enum):
     ATTENTION_DIRECTIVE = "attention_directive"
     SALIENCE_ASSESSMENT = "salience_assessment"
     SLEEP_CYCLE = "sleep_cycle"
+    RESEARCH_EVENT = "research_event"
+    AUTONOMOUS_WORK = "autonomous_work"
 
 
 @dataclass
@@ -73,6 +82,56 @@ class AggregateStats:
         self.last_updated = datetime.utcnow()
 
 
+class TelemetrySubscription:
+    """One bounded consumer queue; a slow operator can never block cognition."""
+
+    def __init__(
+        self,
+        subscription_id: UUID,
+        domains: frozenset[TelemetryDomain],
+        queue_size: int,
+    ) -> None:
+        self.subscription_id = subscription_id
+        self.domains = domains
+        self.queue: asyncio.Queue[TelemetryEvent] = asyncio.Queue(maxsize=queue_size)
+        self._queued_sequences: deque[int] = deque(maxlen=queue_size)
+        self._dropped = 0
+        self._first_dropped_after = 0
+
+    def accepts(self, event: TelemetryEvent) -> bool:
+        return not self.domains or event.domain in self.domains
+
+    def offer(self, event: TelemetryEvent) -> None:
+        if not self.accepts(event):
+            return
+        if self.queue.full():
+            dropped = self.queue.get_nowait()
+            self._queued_sequences.popleft()
+            self._dropped += 1
+            if self._first_dropped_after == 0:
+                self._first_dropped_after = max(0, dropped.sequence - 1)
+        self.queue.put_nowait(event)
+        self._queued_sequences.append(event.sequence)
+
+    async def next_message(self) -> dict[str, Any]:
+        if self._dropped:
+            latest = self._queued_sequences[-1] if self._queued_sequences else 0
+            oldest = self._queued_sequences[0] if self._queued_sequences else max(1, latest)
+            gap = TelemetryGap(
+                requested_after=self._first_dropped_after,
+                available_from=oldest,
+                latest_sequence=latest,
+                dropped_for_subscriber=self._dropped,
+                reason="subscriber_backpressure",
+            )
+            self._dropped = 0
+            self._first_dropped_after = 0
+            return {"type": "gap", "data": gap.model_dump(mode="json")}
+        event = await self.queue.get()
+        self._queued_sequences.popleft()
+        return {"type": "event", "data": event.model_dump(mode="json")}
+
+
 class MetricsService:
     """
     Centralized metrics collection and aggregation for ECA dashboard.
@@ -80,7 +139,14 @@ class MetricsService:
     Provides real-time metrics, historical analysis, and scientific validation data.
     """
 
-    def __init__(self, max_buffer_size: int = 10000, retention_hours: int = 24, chroma_client: Optional[chromadb.Client] = None):
+    def __init__(
+        self,
+        max_buffer_size: int = 10000,
+        retention_hours: int = 24,
+        chroma_client: Optional[chromadb.Client] = None,
+        telemetry_replay_size: int = 2000,
+        telemetry_subscriber_queue_size: int = 256,
+    ):
         """
         Initialize metrics service with ChromaDB persistence.
 
@@ -110,6 +176,15 @@ class MetricsService:
         # ChromaDB setup
         self.client: Optional[chromadb.Client] = chroma_client
         self.metrics_collection: Optional[chromadb.Collection] = None
+
+        # Telemetry is an ephemeral, bounded projection. Domain stores and ledgers
+        # remain authoritative; stream_id changes on every process start.
+        self.telemetry_stream_id = uuid4()
+        self.telemetry_replay_size = max(32, telemetry_replay_size)
+        self.telemetry_subscriber_queue_size = max(8, telemetry_subscriber_queue_size)
+        self.telemetry_events: deque[TelemetryEvent] = deque(maxlen=self.telemetry_replay_size)
+        self._telemetry_sequence = 0
+        self._subscriptions: dict[UUID, TelemetrySubscription] = {}
 
         # Initialize ChromaDB
         asyncio.create_task(self._init_chroma())
@@ -207,7 +282,11 @@ class MetricsService:
         metric_type: MetricType,
         data: Dict[str, Any],
         cycle_id: Optional[str] = None,
-        user_id: Optional[str] = None
+        user_id: Optional[str] = None,
+        *,
+        telemetry_event_type: Optional[str] = None,
+        correlation_id: Optional[str] = None,
+        source_reference: Optional[str] = None,
     ):
         """
         Record a metric event.
@@ -226,20 +305,205 @@ class MetricsService:
             user_id=user_id
         )
 
-        # Add to in-memory buffer
+        # Add to in-memory analytics buffer and update projections before doing
+        # best-effort persistence so operators see the event without storage latency.
         self.events.append(event)
-        
-        # Save to database
-        await self._save_event_to_db(event)
-        
-        # Update aggregates and specialized metrics
         self._update_aggregates(event)
         self._update_specialized_metrics(event)
-
-        # Cleanup old events
         self._cleanup_old_events()
+        self._publish_metric_event(
+            event,
+            event_type=telemetry_event_type,
+            correlation_id=correlation_id,
+            source_reference=source_reference,
+        )
+
+        # ChromaDB is an analytical copy, not the live delivery mechanism.
+        await self._save_event_to_db(event)
 
         logger.debug(f"Recorded metric: {metric_type.value} for cycle {cycle_id}")
+
+    async def record_research_event(self, event: Any) -> None:
+        """Project a persisted research-ledger event into bounded live telemetry."""
+        decision = event.payload.get("decision", {})
+        packet = event.payload.get("packet", {})
+        assessment = event.payload.get("assessment", {})
+        feedback = event.payload.get("feedback", {})
+        payload = {
+            "ledger_sequence": event.sequence,
+            "inquiry_id": str(event.inquiry_id) if event.inquiry_id else None,
+            "assessment_id": str(event.assessment_id) if event.assessment_id else None,
+            "decision_id": str(event.decision_id) if event.decision_id else None,
+            "request_id": str(event.request_id) if event.request_id else None,
+            "disposition": decision.get("disposition"),
+            "provider": packet.get("provider") or decision.get("provider"),
+            "model": packet.get("model") or decision.get("model"),
+            "packet_status": packet.get("status"),
+            "latency_ms": packet.get("latency_ms"),
+            "estimated_cost": packet.get("estimated_cost"),
+            "claim_count": len(packet.get("claims", [])),
+            "source_count": len(packet.get("sources", [])),
+            "grounding_verified": packet.get("grounding_verified"),
+            "recommended_action": assessment.get("recommended_action"),
+            "drive_score": assessment.get("drive_score"),
+            "source_verdict": feedback.get("verdict"),
+        }
+        await self.record_metric(
+            MetricType.RESEARCH_EVENT,
+            payload,
+            cycle_id=str(event.cycle_id) if event.cycle_id else None,
+            user_id=str(event.user_id),
+            telemetry_event_type=event.event_type.value,
+            correlation_id=str(event.inquiry_id or event.assessment_id or "") or None,
+            source_reference=f"research_ledger:{event.sequence}",
+        )
+
+    async def record_autonomous_event(self, event: Any) -> None:
+        """Project a persisted governor-ledger event into bounded live telemetry."""
+        await self.record_metric(
+            MetricType.AUTONOMOUS_WORK,
+            {
+                "ledger_sequence": event.sequence,
+                "task_id": str(event.task_id) if event.task_id else None,
+                "task_type": event.task_type.value if event.task_type else None,
+                "reason": event.payload.get("reason"),
+                "attempt": event.payload.get("attempt"),
+            },
+            user_id=str(event.user_id),
+            telemetry_event_type=event.event_type.value,
+            correlation_id=str(event.task_id) if event.task_id else None,
+            source_reference=f"autonomous_ledger:{event.sequence}",
+        )
+
+    def subscribe(
+        self,
+        *,
+        after_sequence: int = 0,
+        domains: Optional[Iterable[TelemetryDomain]] = None,
+        replay_limit: int = 100,
+    ) -> tuple[TelemetrySubscription, Optional[TelemetryGap]]:
+        """Register a consumer and enqueue a cursor-based bounded replay."""
+        if after_sequence < 0:
+            raise ValueError("after_sequence cannot be negative")
+        if not 0 <= replay_limit <= self.telemetry_subscriber_queue_size:
+            raise ValueError("replay_limit exceeds subscriber queue capacity")
+        selected = frozenset(domains or ())
+        subscription = TelemetrySubscription(
+            uuid4(), selected, self.telemetry_subscriber_queue_size
+        )
+        self._subscriptions[subscription.subscription_id] = subscription
+
+        oldest = self.telemetry_events[0].sequence if self.telemetry_events else 1
+        latest = self._telemetry_sequence
+        gap = None
+        if after_sequence and after_sequence < oldest - 1:
+            gap = TelemetryGap(
+                requested_after=after_sequence,
+                available_from=oldest,
+                latest_sequence=latest,
+                reason="cursor_older_than_replay_window",
+            )
+        eligible = [event for event in self.telemetry_events if event.sequence > after_sequence]
+        if replay_limit:
+            eligible = eligible[-replay_limit:]
+        else:
+            eligible = []
+        for event in eligible:
+            subscription.offer(event)
+        return subscription, gap
+
+    def unsubscribe(self, subscription: TelemetrySubscription) -> None:
+        self._subscriptions.pop(subscription.subscription_id, None)
+
+    def telemetry_hello(self, domains: Iterable[TelemetryDomain]) -> TelemetryHello:
+        oldest = self.telemetry_events[0].sequence if self.telemetry_events else 1
+        return TelemetryHello(
+            stream_id=self.telemetry_stream_id,
+            replay_capacity=self.telemetry_replay_size,
+            subscriber_queue_capacity=self.telemetry_subscriber_queue_size,
+            oldest_sequence=oldest,
+            latest_sequence=self._telemetry_sequence,
+            domains=list(domains) or list(TelemetryDomain),
+        )
+
+    @property
+    def telemetry_latest_sequence(self) -> int:
+        return self._telemetry_sequence
+
+    def _publish_metric_event(
+        self,
+        event: MetricEvent,
+        *,
+        event_type: Optional[str],
+        correlation_id: Optional[str],
+        source_reference: Optional[str],
+    ) -> None:
+        self._telemetry_sequence += 1
+        domain = self._telemetry_domain(event.type)
+        projected = TelemetryEvent(
+            sequence=self._telemetry_sequence,
+            domain=domain,
+            event_type=(event_type or self._infer_event_type(event))[:96],
+            occurred_at=event.timestamp,
+            payload=self._bounded_payload(event.data),
+            cycle_id=str(event.cycle_id) if event.cycle_id else None,
+            user_id=str(event.user_id) if event.user_id else None,
+            correlation_id=correlation_id,
+            source_reference=source_reference,
+        )
+        self.telemetry_events.append(projected)
+        for subscription in tuple(self._subscriptions.values()):
+            subscription.offer(projected)
+
+    @staticmethod
+    def _infer_event_type(event: MetricEvent) -> str:
+        if event.data.get("event"):
+            return str(event.data["event"])
+        if event.type == MetricType.MEMORY_ACCESS:
+            return "memory_stored" if event.data.get("operation") == "store" else "memory_retrieved"
+        if event.type == MetricType.SLEEP_CYCLE:
+            return f"sleep_{event.data.get('status', 'updated')}"
+        if event.type == MetricType.SALIENCE_ASSESSMENT:
+            return "salience_assessed"
+        if event.type == MetricType.AGENT_ACTIVATION:
+            return "agents_activated"
+        if event.type == MetricType.CONFLICT_RESOLUTION:
+            return "conflicts_assessed"
+        if event.type == MetricType.ATTENTION_DIRECTIVE:
+            return "attention_directive"
+        return event.type.value
+
+    @staticmethod
+    def _telemetry_domain(metric_type: MetricType) -> TelemetryDomain:
+        if metric_type == MetricType.MEMORY_ACCESS:
+            return TelemetryDomain.MEMORY
+        if metric_type == MetricType.SALIENCE_ASSESSMENT:
+            return TelemetryDomain.SALIENCE
+        if metric_type == MetricType.SLEEP_CYCLE:
+            return TelemetryDomain.SLEEP
+        if metric_type == MetricType.RESEARCH_EVENT:
+            return TelemetryDomain.RESEARCH
+        if metric_type == MetricType.AUTONOMOUS_WORK:
+            return TelemetryDomain.AUTONOMOUS_WORK
+        return TelemetryDomain.COGNITIVE
+
+    @classmethod
+    def _bounded_payload(cls, value: Any, depth: int = 0) -> Any:
+        """Keep live events compact and JSON-safe without copying prompt content."""
+        if depth >= 5:
+            return "[depth-limited]"
+        if value is None or isinstance(value, (bool, int, float)):
+            return value
+        if isinstance(value, str):
+            return value if len(value) <= 1000 else value[:997] + "..."
+        if isinstance(value, dict):
+            return {
+                str(key)[:96]: cls._bounded_payload(item, depth + 1)
+                for key, item in list(value.items())[:64]
+            }
+        if isinstance(value, (list, tuple, set)):
+            return [cls._bounded_payload(item, depth + 1) for item in list(value)[:64]]
+        return cls._bounded_payload(str(value), depth + 1)
 
     async def _save_event_to_db(self, event: MetricEvent):
         """Save event to ChromaDB collection."""
@@ -268,10 +532,11 @@ class MetricsService:
             document = f"Metric event: {event.type.value} at {event.timestamp.timestamp()}"
             
             # Add to ChromaDB collection
-            self.metrics_collection.add(
+            await asyncio.to_thread(
+                self.metrics_collection.add,
                 ids=[event_id],
                 metadatas=[metadata],
-                documents=[document]
+                documents=[document],
             )
             
         except Exception as e:

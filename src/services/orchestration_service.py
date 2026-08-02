@@ -3,7 +3,7 @@ import asyncio
 import time
 from typing import List, Dict, Any, Optional
 from uuid import UUID
-from datetime import datetime # CQ-003 Fix: Import datetime
+from datetime import datetime, timezone # CQ-003 Fix: Import datetime
 
 from src.core.exceptions import AgentServiceException, APIException
 from src.models.core_models import UserRequest, AgentOutput, CognitiveCycle, ResponseMetadata, OutcomeSignals, ErrorAnalysis
@@ -27,7 +27,8 @@ from src.services.waking_inquiry_service import WakingInquiryService
 from src.services.research_calibration_ledger import ResearchCalibrationLedger
 from src.services.audio_input_processor import AudioInputProcessor
 from src.services.visual_input_processor import VisualInputProcessor
-from src.models.multimodal_models import AudioEvidence, VisualEvidence
+from src.models.multimodal_models import AudioEvidence, SensoryEpisode, VisualEvidence
+from src.services.multisensory_binding_service import MultisensoryBindingService
 from src.services.cognitive_brain import CognitiveBrain
 from src.services.memory_service import MemoryService
 from src.services.background_task_queue import BackgroundTaskQueue
@@ -100,6 +101,7 @@ class OrchestrationService:
         waking_inquiry_service: Optional[WakingInquiryService] = None,
         research_calibration_ledger: Optional[ResearchCalibrationLedger] = None,
         emotional_salience_encoder: Optional[EmotionalSalienceEncoder] = None,
+        multisensory_binding_service: Optional[MultisensoryBindingService] = None,
     ):
         self.perception_agent = perception_agent
         self.emotional_agent = emotional_agent
@@ -130,6 +132,9 @@ class OrchestrationService:
         self.waking_inquiry_service = waking_inquiry_service
         self.research_calibration_ledger = research_calibration_ledger
         self.emotional_salience_encoder = emotional_salience_encoder
+        self.multisensory_binding_service = (
+            multisensory_binding_service or MultisensoryBindingService()
+        )
         self.sleep_cycle_coordinator = None
         self.autonomous_work_governor = None
         self.session_start = datetime.utcnow()  # Track session start for contextual encoding
@@ -152,6 +157,7 @@ class OrchestrationService:
             APIException: If a critical error occurs during orchestration.
         """
         logger.info(f"Orchestrating cognitive cycle for user {user_request.user_id}, session {user_request.session_id}")
+        turn_received_at = datetime.now(timezone.utc)
         if self.sleep_cycle_coordinator:
             self.sleep_cycle_coordinator.note_activity(user_request.user_id)
         if self.autonomous_work_governor:
@@ -240,6 +246,20 @@ class OrchestrationService:
             user_input=effective_input_text,
             agent_outputs=[]
         )
+
+        # Bind bounded observations from this turn before general cognition. This
+        # deterministic advisory cannot mutate evidence or alter routing.
+        with timer.stage("multisensory_binding"):
+            sensory_episode: SensoryEpisode = self.multisensory_binding_service.bind_turn(
+                cycle_id=cognitive_cycle.cycle_id,
+                user_id=user_request.user_id,
+                session_id=user_request.session_id,
+                request_timestamp=turn_received_at,
+                text=user_request.input_text or "",
+                visual_evidence=visual_evidence,
+                audio_evidence=audio_evidence,
+            )
+        cognitive_cycle.metadata["sensory_episode"] = sensory_episode.model_dump(mode="json")
 
         # Record cognitive cycle start metric after input processing
         if self.metrics_service:
@@ -429,6 +449,31 @@ class OrchestrationService:
                     f"audio_sha256:{audio_evidence.sha256}" if audio_evidence else None
                 ),
             )
+        if self.metrics_service:
+            relation_counts = {
+                kind: sum(1 for item in sensory_episode.relations if item.relation_type == kind)
+                for kind in ("agreement", "contradiction", "insufficient_evidence")
+            }
+            await self.metrics_service.record_metric(
+                MetricType.PERCEPTUAL_EVENT,
+                {
+                    "modality": "multisensory",
+                    "status": "bound",
+                    "schema_version": sensory_episode.schema_version,
+                    "modalities": list(sensory_episode.modalities),
+                    "binding_count": len(sensory_episode.bindings),
+                    "relation_counts": relation_counts,
+                    "attention_cue_count": len(sensory_episode.attention.cues),
+                    "attention_priority": sensory_episode.attention.overall_priority,
+                    "routing_changes_applied": False,
+                    "primary_evidence_rewritten": False,
+                    "raw_media_retained": False,
+                },
+                cycle_id=str(cognitive_cycle.cycle_id),
+                user_id=str(user_request.user_id),
+                telemetry_event_type="sensory_episode_bound",
+                source_reference=f"sensory_episode:{sensory_episode.episode_id}",
+            )
 
         # --- Stage 1: Foundational Agents (with selective activation) ---
         logger.info(f"Cycle {cognitive_cycle.cycle_id}: Starting Stage 1 - Foundational Agents")
@@ -443,6 +488,7 @@ class OrchestrationService:
                     user_id=user_request.user_id,
                     visual_evidence=visual_evidence,
                     audio_evidence=audio_evidence,
+                    sensory_episode=sensory_episode,
                 )
             ))
         

@@ -59,6 +59,7 @@ from src.services.autonomous_work_governor import AutonomousWorkGovernor
 from src.services.autonomous_work_store import AutonomousWorkStore
 from src.services.audio_input_processor import AudioInputProcessor
 from src.services.visual_input_processor import VisualInputProcessor
+from src.services.multisensory_binding_service import MultisensoryBindingService
 from src.providers import ModelExecutionScheduler, OllamaProbe
 from src.providers.factory import (
     build_active_provider,
@@ -520,6 +521,9 @@ async def lifespan(app: FastAPI):
             "AudioInputProcessor status: %s",
             app.state.audio_input_processor.status(),
         )
+        app.state.multisensory_binding_service = MultisensoryBindingService(
+            max_alignment_skew_seconds=settings.MULTISENSORY_MAX_ALIGNMENT_SKEW_SECONDS,
+        )
 
         app.state.discovery_agent = DiscoveryAgent(
             llm_service=app.state.llm_service,
@@ -578,6 +582,7 @@ async def lifespan(app: FastAPI):
             waking_inquiry_service=app.state.waking_inquiry_service,
             research_calibration_ledger=app.state.research_calibration_ledger,
             emotional_salience_encoder=app.state.emotional_salience_encoder,
+            multisensory_binding_service=app.state.multisensory_binding_service,
         )
         logger.info("OrchestrationService (Central Agent) initialized successfully with Phase 1 & 2 Brain Architecture services.")
 
@@ -1971,6 +1976,21 @@ async def deep_health_check_endpoint(request_obj: Request):
         health_status["components"]["auditory_sensory_path"] = {
             "status": "unavailable",
             "message": f"Auditory sensory status failed: {e}",
+        }
+
+    try:
+        binder = request_obj.app.state.multisensory_binding_service
+        health_status["components"]["multisensory_binding"] = {
+            "status": "healthy",
+            "schema_version": "sensory-episode-v1",
+            "max_alignment_skew_ms": binder.max_alignment_skew_ms,
+            "generative_fusion": False,
+            "advisory_only": True,
+        }
+    except Exception as e:
+        health_status["components"]["multisensory_binding"] = {
+            "status": "unavailable",
+            "message": f"Multisensory binding status failed: {e}",
         }
 
     try:

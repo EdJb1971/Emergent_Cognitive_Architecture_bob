@@ -11,6 +11,7 @@ import binascii
 import hashlib
 import logging
 import struct
+from datetime import datetime, timezone
 from typing import Any, Optional
 
 from pydantic import ValidationError
@@ -73,6 +74,7 @@ class VisualInputProcessor:
         image_base64: str,
         image_mime_type: Optional[str] = None,
     ) -> VisualEvidence:
+        observed_at = datetime.now(timezone.utc)
         image_bytes, detected_mime, width, height = self._validate_image(
             image_base64,
             image_mime_type,
@@ -143,6 +145,7 @@ Return one JSON object with exactly these fields:
             input_quality_score=quality_score,
             quality_warnings=quality_warnings,
             sha256=hashlib.sha256(image_bytes).hexdigest(),
+            observed_at=observed_at,
             analysis=analysis,
         )
         logger.info(

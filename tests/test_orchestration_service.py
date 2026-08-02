@@ -174,6 +174,9 @@ async def test_orchestration_replaces_raw_image_with_typed_visual_evidence(
     assert cycle.metadata["visual_processing"]["status"] == "processed"
     assert cycle.metadata["visual_processing"]["raw_media_retained"] is False
     assert cycle.metadata["visual_evidence"]["trust_classification"] == "untrusted_perceptual_evidence"
+    assert cycle.metadata["sensory_episode"]["schema_version"] == "sensory-episode-v1"
+    assert cycle.metadata["sensory_episode"]["modalities"] == ["text", "image"]
+    assert perception_kwargs["sensory_episode"].attention.routing_changes_applied is False
     assert encoded not in cycle.model_dump_json()
 
 
@@ -232,7 +235,40 @@ async def test_orchestration_replaces_raw_audio_with_untrusted_auditory_evidence
     assert cycle.metadata["auditory_processing"]["raw_media_retained"] is False
     assert cycle.metadata["auditory_evidence"]["provenance"] == "live_microphone_capture"
     assert cycle.metadata["auditory_evidence"]["trust_classification"] == "untrusted_perceptual_evidence"
+    assert cycle.metadata["sensory_episode"]["modalities"] == ["text", "audio"]
+    assert cycle.metadata["sensory_episode"]["generative_fusion_performed"] is False
+    assert perception_kwargs["sensory_episode"].attention.primary_evidence_rewritten is False
     assert encoded not in cycle.model_dump_json()
+
+
+@pytest.mark.asyncio
+async def test_sensory_episode_telemetry_is_typed_and_content_free(
+    orchestration_service,
+):
+    metrics = AsyncMock()
+    orchestration_service.metrics_service = metrics
+
+    cycle = await orchestration_service.orchestrate_cycle(
+        UserRequest(
+            user_id=uuid4(), session_id=uuid4(),
+            input_text="A private multisensory claim",
+        )
+    )
+
+    calls = [
+        item for item in metrics.record_metric.await_args_list
+        if item.kwargs.get("telemetry_event_type") == "sensory_episode_bound"
+    ]
+    assert len(calls) == 1
+    payload = calls[0].args[1]
+    assert payload["schema_version"] == "sensory-episode-v1"
+    assert payload["modalities"] == ["text"]
+    assert payload["routing_changes_applied"] is False
+    assert payload["primary_evidence_rewritten"] is False
+    assert "private" not in str(payload).lower()
+    assert calls[0].kwargs["source_reference"] == (
+        f"sensory_episode:{cycle.metadata['sensory_episode']['episode_id']}"
+    )
 
 @pytest.mark.asyncio
 async def test_orchestrate_cycle_agent_failure(orchestration_service, mock_agents, mock_cognitive_brain, mock_memory_service):

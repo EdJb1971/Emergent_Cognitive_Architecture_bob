@@ -53,6 +53,12 @@ class Settings(BaseSettings):
     AUDIO_MAX_OUTPUT_TOKENS: int = Field(
         800, ge=128, le=4096, env="AUDIO_MAX_OUTPUT_TOKENS"
     )
+    MULTISENSORY_MAX_ALIGNMENT_SKEW_SECONDS: float = Field(
+        120.0,
+        ge=0.0,
+        le=3600.0,
+        env="MULTISENSORY_MAX_ALIGNMENT_SKEW_SECONDS",
+    )
     EMBEDDING_PROVIDER: str = Field("gemini", env="EMBEDDING_PROVIDER")
     OLLAMA_EMBEDDING_MODEL: str = Field("", env="OLLAMA_EMBEDDING_MODEL")
     OLLAMA_MAX_INTERACTIVE_REQUESTS: int = Field(1, env="OLLAMA_MAX_INTERACTIVE_REQUESTS")

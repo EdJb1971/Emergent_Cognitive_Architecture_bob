@@ -12,6 +12,7 @@ import binascii
 import hashlib
 import logging
 import struct
+from datetime import datetime, timezone
 from typing import Any, Literal, Optional
 
 import numpy as np
@@ -82,6 +83,7 @@ class AudioInputProcessor:
         audio_mime_type: Optional[str] = None,
         provenance: Literal["direct_user_upload", "live_microphone_capture"] = "direct_user_upload",
     ) -> AudioEvidence:
+        observed_at = datetime.now(timezone.utc)
         inspected = await asyncio.to_thread(
             self._validate_audio,
             audio_base64,
@@ -132,6 +134,7 @@ class AudioInputProcessor:
             signal_quality_score=quality_score,
             quality_warnings=quality_warnings,
             sha256=hashlib.sha256(audio_bytes).hexdigest(),
+            observed_at=observed_at,
             inference_performed=inference_performed,
             analysis=analysis,
         )

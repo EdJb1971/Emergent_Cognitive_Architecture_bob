@@ -13,6 +13,10 @@ class PerceptionAnalysis(BaseModel):
     audio_present: bool = False
     image_analysis: Optional[Dict[str, Any]] = Field(None, description="Analysis of the image provided by the user.")
     audio_analysis: Optional[Dict[str, Any]] = Field(None, description="Analysis of the audio provided by the user.")
+    sensory_episode: Optional[Dict[str, Any]] = Field(
+        None,
+        description="Immutable same-turn bindings and advisory-only cross-modal relations.",
+    )
 
 class EmotionScore(BaseModel):
     emotion: str = Field(..., description="Name of the emotion (e.g., 'joy', 'sadness', 'anger').")

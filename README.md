@@ -27,6 +27,7 @@ Neuroscience-inspired multi-agent platform that forms habits, switches strategie
 - **Procedural learning loop**: Cerebellum analog tracks skill categories and learns optimal agent execution sequences, complementing RL-based strategy selection.
 - **Dynamic attention controller**: A feature-flagged ACC/Thalamus hybrid detects drift, emits excitatory/inhibitory signals, adjusts Stage 2 token budgets, and propagates attention motifs through Working Memory.
 - **Theory of Mind with validation**: Predictions about user mental states are auto-validated against actual behavior, with confidence adjusting based on accuracy.
+- **Immutable multisensory binding**: Same-turn text, image, and audio evidence is temporally aligned with conservative agreement/conflict detection and reliability-aware advisory attention; primary observations are never generatively rewritten.
 
 ---
 
@@ -42,6 +43,7 @@ Neuroscience-inspired multi-agent platform that forms habits, switches strategie
 | TheoryOfMindService | TPJ/mPFC | Mental state inference and prediction |
 | AutobiographicalMemory | Hippocampus | Episodic/semantic memory separation |
 | EmotionalSalienceEncoder | Amygdala | Emotional importance tagging |
+| MultisensoryBindingService | Thalamus/Association Cortex | Same-turn temporal binding and advisory conflict attention |
 
 ---
 
@@ -174,6 +176,7 @@ Chat audio attachments use the equivalent local auditory relay. Uploads must be 
 | `OLLAMA_AUDIO_MODEL` | `.env` | Optional dedicated audio model; empty reuses `OLLAMA_CHAT_MODEL` |
 | `AUDIO_MAX_BYTES` | `.env` | Decoded PCM WAV limit (default: 4 MiB) |
 | `AUDIO_MAX_DURATION_SECONDS` | `.env` | Clip duration limit (default: 60 seconds) |
+| `MULTISENSORY_MAX_ALIGNMENT_SKEW_SECONDS` | `.env` | Same-turn text/image/audio binding window (default: 120 seconds) |
 | `STM_TOKEN_BUDGET` | `.env` | Short-term memory token limit (default: 25000) |
 | `CONSOLIDATION_INTERVAL_MINUTES` | `.env` | Memory consolidation frequency (default: 30) |
 

@@ -128,6 +128,30 @@ class AutobiographicalMemorySystem:
                 "trust_classification": "untrusted_perceptual_evidence",
                 "raw_media_retained": False,
             }
+        bound_episode = cycle.metadata.get("sensory_episode")
+        if isinstance(bound_episode, dict):
+            attention = bound_episode.get("attention", {})
+            relations = bound_episode.get("relations", [])
+            bindings = bound_episode.get("bindings", [])
+            sensory_details["multisensory_binding"] = {
+                "episode_id": bound_episode.get("episode_id"),
+                "schema_version": bound_episode.get("schema_version"),
+                "modalities": list(bound_episode.get("modalities", []))[:3],
+                "reliability": {
+                    str(item.get("modality")): item.get("reliability", {}).get("score")
+                    for item in bindings[:3]
+                    if isinstance(item, dict)
+                },
+                "relation_types": [
+                    item.get("relation_type") for item in relations[:3]
+                    if isinstance(item, dict)
+                ],
+                "agreement_detected": bool(attention.get("agreement_detected", False)),
+                "contradiction_detected": bool(attention.get("contradiction_detected", False)),
+                "advisory_only": True,
+                "primary_evidence_rewritten": False,
+                "raw_media_retained": False,
+            }
         
         episode = EpisodicMemory(
             episode_id=episode_id,

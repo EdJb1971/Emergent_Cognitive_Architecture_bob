@@ -35,15 +35,9 @@ class ConflictMonitor:
         # Optional reinforcement learning service for strategy selection
         self.rl_service = rl_service
     
-    async def detect_conflicts(self, agent_outputs: List[AgentOutput]) -> ConflictReport:
+    def _detect_conflicts_sync(self, agent_outputs: List[AgentOutput]) -> ConflictReport:
         """
-        Analyze agent outputs for conflicts and inconsistencies.
-        
-        Args:
-            agent_outputs: List of outputs from all activated agents
-            
-        Returns:
-            ConflictReport with detected conflicts and recommended actions
+        Synchronously analyze agent outputs for conflicts and inconsistencies.
         """
         conflicts = []
         
@@ -80,6 +74,25 @@ class ConflictMonitor:
         
         # Calculate overall coherence score
         coherence_score = self._calculate_coherence_score(conflicts, len(agent_outputs))
+
+        return ConflictReport(
+            conflicts=conflicts,
+            requires_adjustment=requires_adjustment,
+            coherence_score=coherence_score
+        )
+
+    async def detect_conflicts(self, agent_outputs: List[AgentOutput]) -> ConflictReport:
+        """
+        Analyze agent outputs for conflicts and inconsistencies.
+        
+        Args:
+            agent_outputs: List of outputs from all activated agents
+            
+        Returns:
+            ConflictReport with detected conflicts and recommended actions
+        """
+        base_report = self._detect_conflicts_sync(agent_outputs)
+        conflicts = base_report.conflicts
         
         # If RL service is available, enrich conflicts with RL-selected strategies
         if self.rl_service and conflicts:
@@ -390,7 +403,7 @@ class ConflictMonitor:
             return None
             
         # Get conflicts for detailed analysis
-        conflict_report = self.detect_conflicts(agent_outputs)
+        conflict_report = self._detect_conflicts_sync(agent_outputs)
         
         # Determine primary error category based on conflicts
         primary_category = "agent_conflict_unresolved"
@@ -409,8 +422,9 @@ class ConflictMonitor:
             {
                 "type": c.conflict_type,
                 "severity": c.severity,
-                "description": c.description,
-                "involved_agents": c.involved_agents
+                "resolution_strategy": c.resolution_strategy,
+                "involved_agents": c.agents,
+                "details": c.details or {}
             }
             for c in conflict_report.conflicts
         ]

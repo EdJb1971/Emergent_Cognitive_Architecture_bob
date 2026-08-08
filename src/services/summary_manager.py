@@ -523,7 +523,7 @@ class SummaryManager:
             )
 
             # Get LLM analysis
-            consolidation = await self.llm_service.generate_completion(
+            consolidation = await self.llm_service.generate_text(
                 prompt=consolidation_prompt,
                 model_name=settings.LLM_MODEL_NAME,
                 temperature=0.3  # Lower temperature for more focused summary

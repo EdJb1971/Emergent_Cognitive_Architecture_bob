@@ -102,9 +102,9 @@ async def test_metrics_collection():
 
             # Test historical data retrieval
             historical_data = await metrics_service.get_historical_data(hours=1)
-            if historical_data:
+            if historical_data is not None:
                 logger.info("✅ Historical data retrieved successfully")
-                logger.info(f"📈 Historical data contains {len(historical_data.get('metrics_over_time', []))} time points")
+                logger.info(f"📈 Historical data contains {len(historical_data)} time points")
             else:
                 logger.error("❌ Failed to retrieve historical data")
                 return False

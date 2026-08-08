@@ -48,7 +48,7 @@ class MetaCognitiveMonitor:
     Implements "feeling of knowing" meta-cognition.
     """
 
-    def __init__(self, memory_service: MemoryService, llm_service: LLMIntegrationService):
+    def __init__(self, memory_service: Optional[MemoryService] = None, llm_service: Optional[LLMIntegrationService] = None):
         """
         Initialize the meta-cognitive monitor.
 

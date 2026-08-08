@@ -47,7 +47,6 @@ class AutobiographicalMemorySystem:
         # Episodic memories collection
         self.episodic_collection = self.client.get_or_create_collection(
             name=app_settings.CHROMA_COLLECTION_EPISODIC,
-            metadata={"description": "Rich episodic memories for mental time travel"},
             embedding_function=None,
         )
         apply_embedding_identity(
@@ -60,7 +59,6 @@ class AutobiographicalMemorySystem:
         # Semantic memories collection
         self.semantic_collection = self.client.get_or_create_collection(
             name=app_settings.CHROMA_COLLECTION_SEMANTIC,
-            metadata={"description": "Extracted semantic knowledge and concepts"},
             embedding_function=None,
         )
         apply_embedding_identity(

@@ -167,8 +167,8 @@ class ConflictMonitor:
 
         return ConflictReport(
             conflicts=conflicts,
-            requires_adjustment=requires_adjustment,
-            coherence_score=coherence_score
+            requires_adjustment=base_report.requires_adjustment,
+            coherence_score=base_report.coherence_score
         )
     
     def _find_agent_output(self, agents_by_id: Dict[str, AgentOutput], agent_id: str) -> Optional[AgentOutput]:

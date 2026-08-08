@@ -43,7 +43,15 @@ class SummaryManager:
                 self.client = client
                 logger.info("SummaryManager reusing existing ChromaDB client.")
             else:
-                self.client = chromadb.PersistentClient(path=settings.CHROMA_DB_PATH)
+                from chromadb.config import Settings as ChromaSettings
+                self.client = chromadb.PersistentClient(
+                    path=settings.CHROMA_DB_PATH,
+                    settings=ChromaSettings(
+                        anonymized_telemetry=False,
+                        allow_reset=True,
+                        is_persistent=True,
+                    ),
+                )
                 logger.info("SummaryManager created new ChromaDB client.")
             
             self.summaries_collection = self.client.get_or_create_collection(
@@ -576,6 +584,7 @@ class SummaryManager:
         try:
             # Use a consistent ID for the consolidated STM record
             stm_id = f"stm_consolidated:{user_id}"
+            cycle_ids = [str(getattr(c, 'cycle_id', getattr(c, 'id', ''))) for c in cycles]
             
             self.summaries_collection.upsert(
                 ids=[stm_id],
@@ -585,7 +594,7 @@ class SummaryManager:
                     "user_id": str(user_id),
                     "type": "stm_consolidated",
                     "last_updated": datetime.utcnow().isoformat(),
-                    "cycle_ids": [str(c.id) for c in cycles],
+                    "cycle_ids": json.dumps(cycle_ids),
                     "cycle_count": len(cycles)
                 }]
             )

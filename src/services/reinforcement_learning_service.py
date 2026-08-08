@@ -133,7 +133,16 @@ class ReinforcementLearningService:
             if client:
                 self.client = client
             else:
-                self.client = chromadb.PersistentClient(path="./chroma_db")
+                from chromadb.config import Settings as ChromaSettings
+                from src.core.config import settings
+                self.client = chromadb.PersistentClient(
+                    path=settings.CHROMA_DB_PATH,
+                    settings=ChromaSettings(
+                        anonymized_telemetry=False,
+                        allow_reset=True,
+                        is_persistent=True,
+                    ),
+                )
             
             # Collection for Q-values
             self.q_values_collection = self.client.get_or_create_collection(

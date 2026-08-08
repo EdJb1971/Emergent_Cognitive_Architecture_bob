@@ -199,7 +199,14 @@ class MetricsService:
             # Use existing client or create new one
             if self.client is None:
                 from src.core.config import settings
-                self.client = chromadb.PersistentClient(path=settings.CHROMA_DB_PATH)
+                self.client = chromadb.PersistentClient(
+                    path=settings.CHROMA_DB_PATH,
+                    settings=ChromaSettings(
+                        anonymized_telemetry=False,
+                        allow_reset=True,
+                        is_persistent=True,
+                    ),
+                )
                 logger.info("MetricsService created new ChromaDB client.")
             else:
                 logger.info("MetricsService reusing existing ChromaDB client.")
